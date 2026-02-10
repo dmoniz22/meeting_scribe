@@ -1,0 +1,19 @@
+[Unit]
+Description=MeetScribe Audio Daemon
+After=pipewire.service pipewire-pulse.service
+Wants=pipewire.service pipewire-pulse.service
+
+[Service]
+Type=simple
+User=%I
+Environment="XDG_RUNTIME_DIR=/run/user/%U"
+Environment="PULSE_RUNTIME_PATH=/run/user/%U/pulse"
+Environment="HOME=/home/%I"
+WorkingDirectory=/home/%I/meeting_scribe/audio-daemon
+ExecStart=/home/%I/meeting_scribe/audio-daemon/venv/bin/python server.py --socket /tmp/meetscribe-audio.sock --recordings /home/%I/meeting_scribe/data/recordings
+ExecStop=/bin/kill -SIGTERM $MAINPID
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

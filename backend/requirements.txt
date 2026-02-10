@@ -22,13 +22,10 @@ passlib[bcrypt]==1.7.4
 cryptography==43.0.3
 python-multipart==0.0.17
 
-# Audio
-sounddevice==0.5.1
-numpy==2.1.3
-scipy==1.14.1
+# HTTP Client
+httpx==0.27.2
 
 # Utilities
 python-dotenv==1.0.1
-httpx==0.27.2
 jinja2==3.1.4
 structlog==24.4.0

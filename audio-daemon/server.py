@@ -316,12 +316,16 @@ class RequestHandler(BaseHTTPRequestHandler):
 
 def run_server(
     socket_path: str = "/tmp/meetscribe-audio.sock",
-    recordings_path: str = "/data/recordings"
+    recordings_path: str = None
 ):
     """Run the audio daemon server."""
     print("="*60)
     print("MeetScribe Audio Daemon")
     print("="*60)
+    
+    # Use default path relative to script if not provided
+    if recordings_path is None:
+        recordings_path = str(Path(__file__).parent.parent / "data" / "recordings")
     
     # Create daemon instance
     daemon = AudioDaemon(
@@ -375,8 +379,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--recordings",
-        default="/data/recordings",
-        help="Recordings directory (default: /data/recordings)"
+        default=None,
+        help="Recordings directory (default: ../data/recordings)"
     )
     args = parser.parse_args()
     

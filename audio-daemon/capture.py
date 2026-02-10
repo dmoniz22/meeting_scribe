@@ -25,12 +25,14 @@ import queue
 
 import numpy as np
 import sounddevice as sd
+from scipy import signal as scipy_signal
 
 
 @dataclass
 class AudioConfig:
     """Configuration for audio capture."""
-    sample_rate: int = 16000
+    target_sample_rate: int = 16000  # Output rate (Whisper's native rate)
+    capture_sample_rate: int = 48000  # Capture rate (commonly supported)
     channels: int = 2
     dtype: str = "float32"
     chunk_duration: int = 30  # seconds per WAV file
@@ -46,6 +48,7 @@ class AudioCapture:
     - Calculates RMS audio levels in real-time
     - Thread-safe start/stop
     - Automatic file naming with timestamps
+    - Resamples from capture rate to target rate (e.g., 48000 -> 16000)
     """
     
     def __init__(
@@ -65,7 +68,6 @@ class AudioCapture:
         self.stream: Optional[sd.InputStream] = None
         self.audio_queue: queue.Queue = queue.Queue()
         self.writer_thread: Optional[threading.Thread] = None
-        self.level_thread: Optional[threading.Thread] = None
         
         # File management
         self.current_chunk: int = 0
@@ -76,11 +78,17 @@ class AudioCapture:
         # Level monitoring
         self.current_levels = {"system": 0.0, "mic": 0.0}
         
+        # Resampling buffer
+        self.resample_buffer: Optional[np.ndarray] = None
+        
         # Create output directory
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         # Find the audio device
         self.device_id = self._find_device()
+        
+        # Determine actual capture rate
+        self._setup_sample_rate()
         
     def _find_device(self) -> int:
         """Find the MeetScribe virtual source device."""
@@ -93,6 +101,43 @@ class AudioCapture:
         # Fallback to default input
         print(f"Warning: Device '{self.config.device}' not found, using default input")
         return sd.default.device[0]
+    
+    def _setup_sample_rate(self):
+        """Setup sample rate based on device capabilities."""
+        try:
+            device_info = sd.query_devices(self.device_id)
+            default_sr = int(device_info.get('default_samplerate', 48000))
+            
+            # Try to use a rate that's compatible
+            # PipeWire usually supports 48000 well
+            self.config.capture_sample_rate = default_sr
+            
+            print(f"Device default sample rate: {default_sr} Hz")
+            print(f"Will resample from {default_sr} Hz to {self.config.target_sample_rate} Hz")
+            
+        except Exception as e:
+            print(f"Could not query device sample rate: {e}")
+            print(f"Using default capture rate: {self.config.capture_sample_rate} Hz")
+    
+    def _resample_audio(self, audio_data: np.ndarray) -> np.ndarray:
+        """Resample audio from capture rate to target rate."""
+        if self.config.capture_sample_rate == self.config.target_sample_rate:
+            return audio_data
+        
+        # Calculate resampling ratio
+        ratio = self.config.target_sample_rate / self.config.capture_sample_rate
+        
+        # Number of samples after resampling
+        new_length = int(len(audio_data) * ratio)
+        
+        # Resample each channel
+        if audio_data.ndim == 1:
+            return scipy_signal.resample(audio_data, new_length)
+        else:
+            resampled = np.zeros((new_length, audio_data.shape[1]), dtype=audio_data.dtype)
+            for ch in range(audio_data.shape[1]):
+                resampled[:, ch] = scipy_signal.resample(audio_data[:, ch], new_length)
+            return resampled
     
     def _calculate_rms(self, audio_data: np.ndarray) -> tuple[float, float]:
         """Calculate RMS levels for left (system) and right (mic) channels."""
@@ -115,10 +160,13 @@ class AudioCapture:
             print(f"Audio callback status: {status}")
         
         if self.is_recording:
-            # Put audio data in queue for file writer
-            self.audio_queue.put(indata.copy())
+            # Resample to target rate
+            resampled = self._resample_audio(indata)
             
-            # Calculate levels
+            # Put audio data in queue for file writer
+            self.audio_queue.put(resampled.copy())
+            
+            # Calculate levels from original data (for visualization)
             system_level, mic_level = self._calculate_rms(indata)
             self.current_levels = {"system": system_level, "mic": mic_level}
             
@@ -169,7 +217,7 @@ class AudioCapture:
         self.current_file = wave.open(str(chunk_filename), "wb")
         self.current_file.setnchannels(self.config.channels)
         self.current_file.setsampwidth(2)  # 16-bit
-        self.current_file.setframerate(self.config.sample_rate)
+        self.current_file.setframerate(self.config.target_sample_rate)  # Use target rate for output
         
         self.chunk_start_time = datetime.now()
         self.frames_written = 0
@@ -186,7 +234,8 @@ class AudioCapture:
         print(f"Starting audio capture for meeting {self.meeting_id}")
         print(f"Output directory: {self.output_dir}")
         print(f"Device: {self.device_id}")
-        print(f"Sample rate: {self.config.sample_rate} Hz")
+        print(f"Capture rate: {self.config.capture_sample_rate} Hz")
+        print(f"Output rate: {self.config.target_sample_rate} Hz")
         print(f"Channels: {self.config.channels}")
         
         self.is_recording = True
@@ -201,7 +250,7 @@ class AudioCapture:
             self.stream = sd.InputStream(
                 device=self.device_id,
                 channels=self.config.channels,
-                samplerate=self.config.sample_rate,
+                samplerate=self.config.capture_sample_rate,
                 dtype=self.config.dtype,
                 blocksize=1024,
                 callback=self._audio_callback

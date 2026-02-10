@@ -53,7 +53,8 @@ node_modules/
 out/
 
 # Audio recordings
-data/recordings/*.wav
+data/recordings/**/*.wav
+data/recordings/**/*.txt
 !data/recordings/.gitkeep
 
 # Docker volumes

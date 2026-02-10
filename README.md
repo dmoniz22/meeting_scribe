@@ -48,7 +48,7 @@ A bot-less meeting transcription and intelligence platform built with FastAPI, N
 | API | http://localhost:8000 | FastAPI REST API |
 | API Docs | http://localhost:8000/docs | Swagger UI |
 | Database | localhost:5432 | PostgreSQL 17 + pgvector |
-| Redis | localhost:6379 | Job queue |
+| Redis | localhost:6379 | Job queue & pub/sub |
 | Ollama | http://localhost:11434 | Local LLM inference |
 
 ### Default Credentials
@@ -56,9 +56,9 @@ A bot-less meeting transcription and intelligence platform built with FastAPI, N
 - **Database:** meetscribe / Birdsey5@
 - **PostgreSQL:** User: meetscribe, Password: Birdsey5@
 
-### Audio Daemon Setup
+## Audio Recording Setup
 
-The Audio Daemon runs on the host (not in Docker) to access PipeWire:
+### Prerequisites
 
 1. **Check if PipeWire is installed:**
    ```bash
@@ -66,7 +66,17 @@ The Audio Daemon runs on the host (not in Docker) to access PipeWire:
    pw-cli info 0
    ```
 
-2. **Install Audio Daemon dependencies:**
+2. **If PipeWire is not installed (Arch/EndeavourOS):**
+   ```bash
+   sudo pacman -S pipewire pipewire-pulse wireplumber
+   systemctl --user enable --now pipewire pipewire-pulse wireplumber
+   ```
+
+### Audio Daemon Setup
+
+The Audio Daemon runs on the host (not in Docker) to access PipeWire:
+
+1. **Install Audio Daemon dependencies:**
    ```bash
    # On Arch/EndeavourOS
    sudo pacman -S python-sounddevice portaudio
@@ -76,6 +86,17 @@ The Audio Daemon runs on the host (not in Docker) to access PipeWire:
    pip install -r requirements.txt
    ```
 
+2. **Set up PipeWire virtual sink (creates the recording device):**
+   ```bash
+   cd audio-daemon
+   ./setup_pipewire.sh
+   ```
+   
+   This creates:
+   - `MeetScribe Recording Sink` - Virtual sink that mixes system audio + mic
+   - `MeetScribe Recording Source` - Virtual source for the app to capture from
+   - Routes system audio to Left channel, microphone to Right channel
+
 3. **Run the Audio Daemon:**
    ```bash
    cd audio-daemon
@@ -84,11 +105,34 @@ The Audio Daemon runs on the host (not in Docker) to access PipeWire:
 
 4. **Or install as systemd service:**
    ```bash
-   sudo cp meetscribe-audio.service /etc/systemd/system/
+   sudo cp audio-daemon/meetscribe-audio.service /etc/systemd/system/
    sudo systemctl daemon-reload
-   sudo systemctl enable meetscribe-audio.service
-   sudo systemctl start meetscribe-audio.service
+   sudo systemctl enable meetscribe-audio.service --user
+   sudo systemctl start meetscribe-audio.service --user
    ```
+
+### Testing Audio Recording
+
+1. **Start a recording:**
+   ```bash
+   curl -X POST http://localhost:8000/api/v1/recordings/start \
+     -H "Content-Type: application/json" \
+     -d '{"meeting_id": null}'
+   ```
+
+2. **Check recording status:**
+   ```bash
+   curl http://localhost:8000/api/v1/recordings/status
+   ```
+
+3. **Stop the recording:**
+   ```bash
+   curl -X POST http://localhost:8000/api/v1/recordings/stop
+   ```
+
+4. **Files are saved to:** `./data/recordings/{meeting_id}/`
+   - `chunk_000.wav`, `chunk_001.wav`, etc. (30-second chunks)
+   - `full_recording.wav` (concatenated after stop)
 
 ## Project Structure
 
@@ -103,10 +147,32 @@ meeting_scribe/
 │   └── alembic/       # Database migrations
 ├── frontend/          # Next.js 15 application
 ├── audio-daemon/      # PipeWire audio capture (host)
+│   ├── setup_pipewire.sh     # Virtual sink setup
+│   ├── capture.py            # Audio capture module
+│   ├── device_monitor.py     # Device change detection
+│   ├── server.py             # HTTP control server
+│   └── meetscribe-audio.service  # systemd unit
 ├── docker/            # Docker configurations
 ├── data/              # Persistent data
 └── docker-compose.yml
 ```
+
+## API Endpoints
+
+### Meetings
+- `GET /api/v1/meetings` - List meetings
+- `POST /api/v1/meetings` - Create meeting
+- `GET /api/v1/meetings/{id}` - Get meeting details
+- `PUT /api/v1/meetings/{id}` - Update meeting
+- `DELETE /api/v1/meetings/{id}` - Delete meeting
+
+### Recording
+- `POST /api/v1/recordings/start` - Start recording
+- `POST /api/v1/recordings/stop` - Stop recording
+- `GET /api/v1/recordings/status` - Get recording status
+
+### WebSocket
+- `WS /ws/meetings/{meeting_id}` - Real-time audio levels and events
 
 ## Development
 
@@ -126,6 +192,15 @@ npm install
 npm run dev
 ```
 
+### Audio Daemon Development
+
+```bash
+cd audio-daemon
+python capture.py --duration 10 --concatenate  # Test capture
+python device_monitor.py                       # Test device monitoring
+python server.py                              # Run the full daemon
+```
+
 ### Database Migrations
 
 ```bash
@@ -142,6 +217,28 @@ Edit `.env` file to customize:
 - `OLLAMA_MODEL`: LLM model (llama3.1:8b, etc.)
 - `WHISPER_COMPUTE_TYPE`: float16, int8, etc.
 - `HF_TOKEN`: HuggingFace token for pyannote diarization
+
+## Audio Architecture
+
+```
+System Output (speakers/headphones)
+    ↓ (monitor)
+MeetScribe Virtual Sink (mixes audio)
+    ↓
+MeetScribe Virtual Source (capture device)
+    ↓
+Audio Daemon → WAV chunks → FFmpeg concat
+
+Microphone Input
+    ↓
+MeetScribe Virtual Sink
+```
+
+**Channel Layout:**
+- Left Channel: System audio (what you hear)
+- Right Channel: Microphone (what you say)
+
+This stereo separation helps with speaker diarization in Phase 3.
 
 ## License
 

@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from app.core.config import settings
 from app.core.database import engine, Base
-from app.routers import meetings, health, recordings
+from app.routers import meetings, health, recordings, search, websocket
 
 
 @asynccontextmanager
@@ -37,6 +37,8 @@ app.add_middleware(
 app.include_router(health.router, prefix="/api/v1")
 app.include_router(meetings.router, prefix="/api/v1")
 app.include_router(recordings.router, prefix="/api/v1")
+app.include_router(search.router, prefix="/api/v1")
+app.include_router(websocket.router, prefix="/api/v1")
 
 
 @app.get("/")

@@ -233,6 +233,13 @@ async def stop_recording(db: AsyncSession = Depends(get_db)):
         meeting.audio_path = daemon_response.get("audio_path")
         await db.commit()
         
+        # Trigger transcription task
+        from app.tasks.transcription import transcribe_meeting
+        audio_path = daemon_response.get("audio_path")
+        if audio_path:
+            transcribe_meeting.delay(str(meeting.id), audio_path)
+            print(f"Triggered transcription task for meeting {meeting.id}")
+        
         return StopRecordingResponse(
             success=True,
             meeting_id=meeting.id,

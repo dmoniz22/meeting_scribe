@@ -247,9 +247,13 @@ class UnixHTTPServer(UnixStreamServer):
     """HTTP server that listens on a Unix socket."""
     
     def server_bind(self):
-        # Remove existing socket file
+        # Remove existing socket file or directory
         if os.path.exists(self.server_address):
-            os.unlink(self.server_address)
+            if os.path.isdir(self.server_address):
+                import shutil
+                shutil.rmtree(self.server_address)
+            else:
+                os.unlink(self.server_address)
         super().server_bind()
         # Set permissions
         os.chmod(self.server_address, 0o666)

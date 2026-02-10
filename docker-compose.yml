@@ -1,0 +1,153 @@
+version: "3.8"
+
+services:
+  db:
+    build:
+      context: ./docker
+      dockerfile: postgres.Dockerfile
+    container_name: meetscribe-db
+    environment:
+      POSTGRES_USER: meetscribe
+      POSTGRES_PASSWORD: Birdsey5@
+      POSTGRES_DB: meetscribe
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meetscribe -d meetscribe"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - meetscribe-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: meetscribe-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - meetscribe-network
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: meetscribe-api
+    environment:
+      DATABASE_URL: postgresql+asyncpg://meetscribe:Birdsey5%40@db:5432/meetscribe
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-change-me-in-production}
+      AUDIO_DAEMON_SOCKET: /tmp/meetscribe-audio.sock
+      OLLAMA_BASE_URL: http://ollama:11434
+      WHISPER_MODEL: ${WHISPER_MODEL:-medium}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
+      WHISPER_BATCH_SIZE: ${WHISPER_BATCH_SIZE:-8}
+      HF_TOKEN: ${HF_TOKEN:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+      RECORDINGS_PATH: /data/recordings
+    volumes:
+      - ./data/recordings:/data/recordings
+      - /tmp/meetscribe-audio.sock:/tmp/meetscribe-audio.sock
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - meetscribe-network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+    container_name: meetscribe-worker
+    environment:
+      DATABASE_URL: postgresql+asyncpg://meetscribe:Birdsey5%40@db:5432/meetscribe
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-change-me-in-production}
+      OLLAMA_BASE_URL: http://ollama:11434
+      WHISPER_MODEL: ${WHISPER_MODEL:-medium}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
+      WHISPER_BATCH_SIZE: ${WHISPER_BATCH_SIZE:-8}
+      HF_TOKEN: ${HF_TOKEN:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+      RECORDINGS_PATH: /data/recordings
+    volumes:
+      - ./data/recordings:/data/recordings
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    networks:
+      - meetscribe-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: meetscribe-frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_WS_URL: ws://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    networks:
+      - meetscribe-network
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm run dev
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: meetscribe-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - meetscribe-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_data:
+
+networks:
+  meetscribe-network:
+    driver: bridge

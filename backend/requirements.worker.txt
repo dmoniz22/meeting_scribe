@@ -1,0 +1,14 @@
+# Worker-specific requirements (includes all API requirements)
+-r requirements.txt
+
+# ML/AI Libraries
+torch==2.5.1
+torchaudio==2.5.1
+transformers==4.46.3
+sentence-transformers==3.3.1
+whisperx==3.1.6
+
+# PDF Generation
+weasyprint==62.3
+
+# Note: PyTorch CUDA will be installed via docker-compose with GPU support

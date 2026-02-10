@@ -81,8 +81,10 @@ The Audio Daemon runs on the host (not in Docker) to access PipeWire:
    # On Arch/EndeavourOS
    sudo pacman -S python-sounddevice portaudio
    
-   # Install Python dependencies
+   # Create virtual environment and install dependencies
    cd audio-daemon
+   python -m venv venv
+   source venv/bin/activate
    pip install -r requirements.txt
    ```
 
@@ -100,6 +102,7 @@ The Audio Daemon runs on the host (not in Docker) to access PipeWire:
 3. **Run the Audio Daemon:**
    ```bash
    cd audio-daemon
+   source venv/bin/activate
    python server.py
    ```
 
@@ -196,6 +199,7 @@ npm run dev
 
 ```bash
 cd audio-daemon
+source venv/bin/activate
 python capture.py --duration 10 --concatenate  # Test capture
 python device_monitor.py                       # Test device monitoring
 python server.py                              # Run the full daemon

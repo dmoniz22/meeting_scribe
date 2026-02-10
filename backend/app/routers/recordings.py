@@ -5,7 +5,8 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from uuid import UUID
 from datetime import datetime
-import httpx
+import json
+import socket
 import os
 
 from app.core.database import get_db
@@ -18,32 +19,84 @@ router = APIRouter(prefix="/recordings", tags=["recordings"])
 AUDIO_DAEMON_SOCKET = settings.AUDIO_DAEMON_SOCKET
 
 
+class UnixSocketHTTP:
+    """Simple HTTP client for Unix sockets."""
+    
+    def __init__(self, socket_path: str):
+        self.socket_path = socket_path
+    
+    def request(self, method: str, endpoint: str, data: dict = None) -> dict:
+        """Make HTTP request over Unix socket."""
+        import io
+        
+        # Create socket connection
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            sock.connect(self.socket_path)
+            sock.settimeout(10.0)
+            
+            # Build HTTP request
+            body = json.dumps(data).encode() if data else b""
+            request_lines = [
+                f"{method} {endpoint} HTTP/1.1",
+                f"Host: localhost",
+                f"Content-Type: application/json",
+                f"Content-Length: {len(body)}",
+                "Connection: close",
+                "",
+                ""
+            ]
+            request = "\r\n".join(request_lines).encode() + body
+            
+            # Send request
+            sock.sendall(request)
+            
+            # Receive response
+            response = b""
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                response += chunk
+            
+            # Parse response
+            response_text = response.decode('utf-8', errors='ignore')
+            
+            # Split headers and body
+            if '\r\n\r\n' in response_text:
+                headers, body = response_text.split('\r\n\r\n', 1)
+            elif '\n\n' in response_text:
+                headers, body = response_text.split('\n\n', 1)
+            else:
+                raise Exception("Invalid HTTP response")
+            
+            # Parse JSON body
+            try:
+                return json.loads(body)
+            except json.JSONDecodeError:
+                raise Exception(f"Invalid JSON response: {body[:200]}")
+                
+        finally:
+            sock.close()
+
+
 async def call_audio_daemon(method: str, endpoint: str, data: dict = None) -> dict:
     """Make HTTP request to Audio Daemon via Unix socket."""
-    # For Docker environment, we use HTTP instead of Unix socket
-    # The API container can connect to the host's audio daemon
-    base_url = "http://host.docker.internal:8001"  # Alternative port for audio daemon HTTP
+    socket_path = AUDIO_DAEMON_SOCKET
     
-    try:
-        async with httpx.AsyncClient() as client:
-            url = f"{base_url}{endpoint}"
-            
-            if method == "GET":
-                response = await client.get(url, timeout=10.0)
-            elif method == "POST":
-                response = await client.post(url, json=data, timeout=10.0)
-            else:
-                raise ValueError(f"Unsupported method: {method}")
-            
-            response.raise_for_status()
-            return response.json()
-    except httpx.ConnectError:
-        # Audio daemon not running
+    # Check if socket exists
+    if not os.path.exists(socket_path):
         raise HTTPException(
             status_code=503,
             detail="Audio daemon not available. Please ensure the audio daemon is running on the host."
         )
-    except httpx.HTTPError as e:
+    
+    try:
+        client = UnixSocketHTTP(socket_path)
+        return client.request(method, endpoint, data)
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(
             status_code=502,
             detail=f"Audio daemon error: {str(e)}"

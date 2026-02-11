@@ -7,6 +7,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+from pgvector.sqlalchemy import Vector
 
 from app.core.database import Base
 
@@ -87,7 +88,7 @@ class TranscriptSegment(Base):
     end_time = Column(Float, nullable=False)
     text = Column(Text, nullable=False)
     confidence = Column(Float, nullable=True)  # WhisperX confidence score
-    embedding = Column(JSON, nullable=True)  # 384-dim vector stored as JSON for now
+    embedding = Column(Vector(384), nullable=True)  # 384-dim vector for semantic search
     
     # Relationships
     meeting = relationship("Meeting", back_populates="transcript_segments")
@@ -108,7 +109,7 @@ class Note(Base):
     recording_offset = Column(Float, nullable=False)  # Seconds from meeting start
     content = Column(Text, nullable=False)
     note_type = Column(String(20), default="general")  # general, action_item, decision, question
-    embedding = Column(JSON, nullable=True)  # 384-dim vector
+    embedding = Column(Vector(384), nullable=True)  # 384-dim vector for semantic search
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     
     # Relationships

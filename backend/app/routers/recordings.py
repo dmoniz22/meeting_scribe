@@ -233,11 +233,14 @@ async def stop_recording(db: AsyncSession = Depends(get_db)):
         meeting.audio_path = daemon_response.get("audio_path")
         await db.commit()
         
-        # Trigger transcription task using send_task to avoid importing ML libraries
+        # Trigger transcription task using Celery
         audio_path = daemon_response.get("audio_path")
         if audio_path:
-            from celery import current_app
-            current_app.send_task(
+            from celery import Celery
+            celery_app = Celery('meetscribe')
+            celery_app.conf.broker_url = settings.REDIS_URL
+            celery_app.conf.result_backend = settings.REDIS_URL
+            celery_app.send_task(
                 'app.tasks.transcription.transcribe_meeting',
                 args=[str(meeting.id), audio_path],
                 queue='default'

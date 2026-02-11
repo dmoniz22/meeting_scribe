@@ -237,12 +237,17 @@ async def stop_recording(db: AsyncSession = Depends(get_db)):
         audio_path = daemon_response.get("audio_path")
         if audio_path:
             from celery import Celery
+            # Convert host path to container path
+            container_audio_path = audio_path.replace(
+                "/home/dmoniz/projects/meeting_transcriber/data/recordings",
+                "/data/recordings"
+            )
             celery_app = Celery('meetscribe')
             celery_app.conf.broker_url = settings.REDIS_URL
             celery_app.conf.result_backend = settings.REDIS_URL
             celery_app.send_task(
                 'app.tasks.transcription.transcribe_meeting',
-                args=[str(meeting.id), audio_path],
+                args=[str(meeting.id), container_audio_path],
                 queue='default'
             )
             print(f"Triggered transcription task for meeting {meeting.id}")

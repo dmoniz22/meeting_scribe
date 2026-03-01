@@ -104,6 +104,10 @@ def transcribe_meeting(self, meeting_id: str, audio_path: str):
     print(f"Audio file: {audio_path}")
     print(f"{'='*60}\n")
     
+    # Create a new event loop for this task
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
     job = TranscriptionJob(meeting_id)
     
     # Check if audio file exists
@@ -131,7 +135,11 @@ def transcribe_meeting(self, meeting_id: str, audio_path: str):
             settings.WHISPER_MODEL,
             device=device,
             compute_type=compute_type,
-            language="en"  # Auto-detect if None
+            language="en",  # Auto-detect if None
+            asr_options={
+                "multilingual": False,
+                "hotwords": []
+            }
         )
         
         print("  ✓ Model loaded")
@@ -209,7 +217,7 @@ def transcribe_meeting(self, meeting_id: str, audio_path: str):
         
         # Step 4: Store in database
         print("\n  Saving to database...")
-        asyncio.run(save_transcription_results(meeting_id, result))
+        save_transcription_results_sync(meeting_id, result)
         print("  ✓ Results saved")
         
         job.update_progress("transcription", 100, "completed", {
@@ -243,64 +251,79 @@ def transcribe_meeting(self, meeting_id: str, audio_path: str):
         except MaxRetriesExceededError:
             print("Max retries exceeded, marking as failed")
             raise
-
-
-async def save_transcription_results(meeting_id: str, result: dict):
-    """Save transcription results to database."""
-    async with AsyncSessionLocal() as session:
+    finally:
+        # Clean up the event loop
         try:
-            meeting_uuid = UUID(meeting_id)
-            
-            # Get meeting
-            meeting_result = await session.execute(
-                select(Meeting).where(Meeting.id == meeting_uuid)
-            )
-            meeting = meeting_result.scalar_one_or_none()
-            
-            if not meeting:
-                raise ValueError(f"Meeting not found: {meeting_id}")
-            
-            # Collect unique speakers
-            speakers_dict = {}
-            colors = ["#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899", "#06B6D4", "#84CC16"]
-            
-            for segment in result["segments"]:
-                speaker_label = segment.get("speaker", "SPEAKER_00")
-                if speaker_label not in speakers_dict:
-                    color_idx = len(speakers_dict) % len(colors)
-                    speaker = Speaker(
-                        meeting_id=meeting_uuid,
-                        label=speaker_label,
-                        color=colors[color_idx]
-                    )
-                    session.add(speaker)
-                    speakers_dict[speaker_label] = speaker
-            
-            await session.flush()  # Get speaker IDs
-            
-            # Create transcript segments
-            for segment in result["segments"]:
-                speaker_label = segment.get("speaker", "SPEAKER_00")
-                speaker = speakers_dict.get(speaker_label)
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
+        except:
+            pass
+        asyncio.set_event_loop(None)
+
+
+def save_transcription_results_sync(meeting_id: str, result: dict):
+    """Save transcription results to database (synchronous version)."""
+    import asyncio
+    
+    async def _save():
+        async with AsyncSessionLocal() as session:
+            try:
+                meeting_uuid = UUID(meeting_id)
                 
-                transcript_segment = TranscriptSegment(
-                    meeting_id=meeting_uuid,
-                    speaker_id=speaker.id if speaker else None,
-                    start_time=segment["start"],
-                    end_time=segment["end"],
-                    text=segment["text"].strip(),
-                    confidence=segment.get("confidence", 1.0)
+                # Get meeting
+                meeting_result = await session.execute(
+                    select(Meeting).where(Meeting.id == meeting_uuid)
                 )
-                session.add(transcript_segment)
-            
-            # Update meeting status
-            meeting.status = "completed"
-            
-            await session.commit()
-            
-        except Exception as e:
-            await session.rollback()
-            raise
+                meeting = meeting_result.scalar_one_or_none()
+                
+                if not meeting:
+                    raise ValueError(f"Meeting not found: {meeting_id}")
+                
+                # Collect unique speakers
+                speakers_dict = {}
+                colors = ["#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899", "#06B6D4", "#84CC16"]
+                
+                for segment in result["segments"]:
+                    speaker_label = segment.get("speaker", "SPEAKER_00")
+                    if speaker_label not in speakers_dict:
+                        color_idx = len(speakers_dict) % len(colors)
+                        speaker = Speaker(
+                            meeting_id=meeting_uuid,
+                            label=speaker_label,
+                            color=colors[color_idx]
+                        )
+                        session.add(speaker)
+                        speakers_dict[speaker_label] = speaker
+                
+                await session.flush()  # Get speaker IDs
+                
+                # Create transcript segments
+                for segment in result["segments"]:
+                    speaker_label = segment.get("speaker", "SPEAKER_00")
+                    speaker = speakers_dict.get(speaker_label)
+                    
+                    transcript_segment = TranscriptSegment(
+                        meeting_id=meeting_uuid,
+                        speaker_id=speaker.id if speaker else None,
+                        start_time=segment["start"],
+                        end_time=segment["end"],
+                        text=segment["text"].strip(),
+                        confidence=segment.get("confidence", 1.0)
+                    )
+                    session.add(transcript_segment)
+                
+                # Update meeting status
+                meeting.status = "completed"
+                
+                await session.commit()
+                
+            except Exception as e:
+                await session.rollback()
+                raise
+    
+    # Get the current event loop and run the async function
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(_save())
 
 
 # Make sure to create async engine

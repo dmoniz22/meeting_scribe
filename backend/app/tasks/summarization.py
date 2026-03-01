@@ -15,7 +15,7 @@ from uuid import UUID
 from celery import shared_task
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import settings
@@ -43,9 +43,13 @@ def summarize_meeting(self, meeting_id: str):
     print(f"Model: {settings.OLLAMA_MODEL}")
     print(f"{'='*60}\n")
     
+    # Create a new event loop for this task
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
     try:
         # Fetch transcript and notes
-        transcript_data = asyncio.run(_fetch_meeting_data(meeting_id))
+        transcript_data = loop.run_until_complete(_fetch_meeting_data(meeting_id))
         
         if not transcript_data["segments"]:
             print("⚠ No transcript segments found, skipping summarization")
@@ -59,7 +63,7 @@ def summarize_meeting(self, meeting_id: str):
         summary_result = _generate_summary_with_ollama(transcript_text, notes_text)
         
         # Save to database
-        asyncio.run(_save_summary(meeting_id, summary_result))
+        loop.run_until_complete(_save_summary(meeting_id, summary_result))
         
         print(f"\n{'='*60}")
         print("✓ Summary generated successfully")
@@ -74,6 +78,14 @@ def summarize_meeting(self, meeting_id: str):
     except Exception as e:
         print(f"✗ Error generating summary: {e}")
         raise self.retry(exc=e)
+    finally:
+        # Clean up the event loop
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
+        except:
+            pass
+        asyncio.set_event_loop(None)
 
 
 async def _fetch_meeting_data(meeting_id: str) -> Dict:

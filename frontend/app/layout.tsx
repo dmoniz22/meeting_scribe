@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import MainLayout from "./components/layout/MainLayout";
 
 export const metadata: Metadata = {
-  title: "MeetScribe - Meeting Assistant",
-  description: "Local-First Linux Meeting Transcription & Intelligence",
+  title: "MeetScribe - AI Meeting Assistant",
+  description: "Record, transcribe, and summarize your meetings with AI",
 };
 
 export default function RootLayout({
@@ -14,7 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="antialiased">
-        {children}
+        <MainLayout>{children}</MainLayout>
       </body>
     </html>
   );

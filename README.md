@@ -36,17 +36,17 @@ A bot-less meeting transcription and intelligence platform built with FastAPI, N
    ```
 
 5. **Verify the installation:**
-   - API: http://localhost:8000/docs
+   - API: http://localhost:8003/docs
    - Frontend: http://localhost:3000
-   - API Health: `curl http://localhost:8000/health`
+   - API Health: `curl http://localhost:8003/health`
 
 ### Services
 
 | Service | URL | Description |
 |---------|-----|-------------|
 | Frontend | http://localhost:3000 | Next.js web dashboard |
-| API | http://localhost:8000 | FastAPI REST API |
-| API Docs | http://localhost:8000/docs | Swagger UI |
+| API | http://localhost:8003 | FastAPI REST API |
+| API Docs | http://localhost:8003/docs | Swagger UI |
 | Database | localhost:5432 | PostgreSQL 17 + pgvector |
 | Redis | localhost:6379 | Job queue & pub/sub |
 | Ollama | http://localhost:11434 | Local LLM inference |
@@ -118,19 +118,19 @@ The Audio Daemon runs on the host (not in Docker) to access PipeWire:
 
 1. **Start a recording:**
    ```bash
-   curl -X POST http://localhost:8000/api/v1/recordings/start \
+   curl -X POST http://localhost:8003/api/v1/recordings/start \
      -H "Content-Type: application/json" \
      -d '{"meeting_id": null}'
    ```
 
 2. **Check recording status:**
    ```bash
-   curl http://localhost:8000/api/v1/recordings/status
+   curl http://localhost:8003/api/v1/recordings/status
    ```
 
 3. **Stop the recording:**
    ```bash
-   curl -X POST http://localhost:8000/api/v1/recordings/stop
+   curl -X POST http://localhost:8003/api/v1/recordings/stop
    ```
 
 4. **Files are saved to:** `./data/recordings/{meeting_id}/`

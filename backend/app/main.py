@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from app.core.config import settings
 from app.core.database import engine, Base
-from app.routers import meetings, health, recordings, search, websocket
+from app.routers import meetings, health, recordings, search, websocket, meeting_detail, settings
 
 
 @asynccontextmanager
@@ -39,6 +39,8 @@ app.include_router(meetings.router, prefix="/api/v1")
 app.include_router(recordings.router, prefix="/api/v1")
 app.include_router(search.router, prefix="/api/v1")
 app.include_router(websocket.router, prefix="/api/v1")
+app.include_router(meeting_detail.router, prefix="/api/v1")
+app.include_router(settings.router, prefix="/api/v1")
 
 
 @app.get("/")

@@ -1,107 +1,171 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import RecordingCard from "./components/dashboard/RecordingCard";
+import LiveNotes from "./components/dashboard/LiveNotes";
+import MeetingsList from "./components/dashboard/MeetingsList";
+import { meetingsApi, recordingsApi } from "./lib/api";
+import type { Meeting, RecordingStatus, Note } from "./lib/constants";
 
-interface Meeting {
-  id: string;
-  title: string;
-  status: string;
-  created_at: string;
-}
-
-export default function Home() {
+export default function Dashboard() {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [recordingStatus, setRecordingStatus] = useState<RecordingStatus | null>(null);
+  const [recordingLoading, setRecordingLoading] = useState(false);
+  const [liveNotes, setLiveNotes] = useState<Note[]>([]);
 
+  // Fetch initial data
   useEffect(() => {
     fetchMeetings();
+    fetchRecordingStatus();
   }, []);
+
+  // Poll recording status every 2 seconds
+  useEffect(() => {
+    const interval = setInterval(fetchRecordingStatus, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Fetch live notes when recording
+  useEffect(() => {
+    if (recordingStatus?.is_recording && recordingStatus.meeting_id) {
+      fetchLiveNotes();
+      const interval = setInterval(fetchLiveNotes, 3000);
+      return () => clearInterval(interval);
+    } else {
+      setLiveNotes([]);
+    }
+  }, [recordingStatus?.is_recording, recordingStatus?.meeting_id]);
 
   const fetchMeetings = async () => {
     try {
-      const response = await fetch("http://localhost:8000/api/v1/meetings");
-      if (!response.ok) {
-        throw new Error("Failed to fetch meetings");
-      }
-      const data = await response.json();
-      setMeetings(data.items || []);
+      setLoading(true);
+      const { data, error } = await meetingsApi.getAll();
+      if (error) throw new Error(error);
+      setMeetings(data?.items || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+      setError(err instanceof Error ? err.message : "Failed to fetch meetings");
     } finally {
       setLoading(false);
     }
   };
 
-  const createMeeting = async () => {
+  const fetchRecordingStatus = async () => {
     try {
-      const response = await fetch("http://localhost:8000/api/v1/meetings", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ title: "New Meeting" }),
-      });
-      if (!response.ok) {
-        throw new Error("Failed to create meeting");
-      }
-      fetchMeetings();
+      const { data } = await recordingsApi.getStatus();
+      setRecordingStatus(data);
+    } catch {
+      // Backend not available - silent fail
+    }
+  };
+
+  const fetchLiveNotes = async () => {
+    if (!recordingStatus?.meeting_id) return;
+    try {
+      const { data } = await meetingsApi.getNotes(recordingStatus.meeting_id);
+      if (data) setLiveNotes(data);
+    } catch {
+      // Silent fail
+    }
+  };
+
+  const handleStartRecording = async () => {
+    setRecordingLoading(true);
+    setError(null);
+    try {
+      const { error } = await recordingsApi.start();
+      if (error) throw new Error(error);
+      await fetchRecordingStatus();
+      setTimeout(fetchMeetings, 1000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+      setError(err instanceof Error ? err.message : "Failed to start recording");
+    } finally {
+      setRecordingLoading(false);
+    }
+  };
+
+  const handleStopRecording = async () => {
+    setRecordingLoading(true);
+    try {
+      await recordingsApi.stop();
+      await fetchRecordingStatus();
+      setTimeout(fetchMeetings, 1000);
+    } catch (err) {
+      setError("Failed to stop recording");
+    } finally {
+      setRecordingLoading(false);
+    }
+  };
+
+  const handleAddLiveNote = async (content: string, noteType: string) => {
+    if (!recordingStatus?.meeting_id) return;
+    const { error } = await meetingsApi.addNote(
+      recordingStatus.meeting_id,
+      content,
+      recordingStatus.duration_seconds || 0,
+      noteType
+    );
+    if (error) {
+      setError(error);
+    } else {
+      await fetchLiveNotes();
+    }
+  };
+
+  const handleDeleteMeeting = async (id: string) => {
+    const { error } = await meetingsApi.delete(id);
+    if (error) {
+      setError(error);
+    } else {
+      await fetchMeetings();
     }
   };
 
   return (
-    <div className="min-h-screen p-8">
-      <main className="max-w-4xl mx-auto">
-        <h1 className="text-4xl font-bold mb-8">MeetScribe</h1>
-        <p className="text-gray-600 mb-8">Local-First Linux Meeting Assistant</p>
+    <div>
+      {/* Page Header */}
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-slate-900">Dashboard</h1>
+        <p className="text-slate-500 mt-1">Manage your meetings and recordings</p>
+      </div>
 
-        <div className="mb-8">
+      {/* Error Banner */}
+      {error && (
+        <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl flex items-center gap-3">
+          <span className="font-medium">Error:</span> {error}
           <button
-            onClick={createMeeting}
-            className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors"
+            onClick={() => setError(null)}
+            className="ml-auto text-sm hover:underline"
           >
-            Create Meeting
+            Dismiss
           </button>
         </div>
+      )}
 
-        {loading && <p>Loading meetings...</p>}
-        
-        {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-            {error}
-          </div>
-        )}
+      {/* Recording Control */}
+      <RecordingCard
+        status={recordingStatus}
+        onStart={handleStartRecording}
+        onStop={handleStopRecording}
+        loading={recordingLoading}
+      />
 
-        <div className="space-y-4">
-          <h2 className="text-2xl font-semibold">Meetings ({meetings.length})</h2>
-          
-          {meetings.length === 0 && !loading && (
-            <p className="text-gray-500">No meetings yet. Create one to get started!</p>
-          )}
+      {/* Live Notes (only when recording) */}
+      {recordingStatus?.is_recording && recordingStatus.meeting_id && (
+        <LiveNotes
+          recordingStatus={recordingStatus}
+          notes={liveNotes}
+          onAddNote={handleAddLiveNote}
+        />
+      )}
 
-          {meetings.map((meeting) => (
-            <div
-              key={meeting.id}
-              className="border rounded-lg p-4 hover:shadow-md transition-shadow"
-            >
-              <h3 className="text-xl font-medium">{meeting.title}</h3>
-              <div className="flex gap-4 mt-2 text-sm text-gray-600">
-                <span className={`px-2 py-1 rounded ${
-                  meeting.status === "idle" ? "bg-gray-200" :
-                  meeting.status === "recording" ? "bg-red-200" :
-                  meeting.status === "completed" ? "bg-green-200" :
-                  "bg-yellow-200"
-                }`}>
-                  {meeting.status}
-                </span>
-                <span>{new Date(meeting.created_at).toLocaleString()}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </main>
+      {/* Meetings List */}
+      <MeetingsList
+        meetings={meetings}
+        loading={loading}
+        onDelete={handleDeleteMeeting}
+      />
     </div>
   );
 }

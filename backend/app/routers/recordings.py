@@ -8,6 +8,7 @@ from datetime import datetime
 import json
 import socket
 import os
+import urllib.request
 
 from app.core.database import get_db
 from app.core.config import settings
@@ -15,87 +16,43 @@ from app.models.meeting import Meeting
 
 router = APIRouter(prefix="/recordings", tags=["recordings"])
 
-# Audio Daemon connection
-AUDIO_DAEMON_SOCKET = settings.AUDIO_DAEMON_SOCKET
+# Audio Daemon connection - TCP mode
+AUDIO_DAEMON_HOST = os.getenv("AUDIO_DAEMON_HOST", "host.docker.internal")
+AUDIO_DAEMON_PORT = int(os.getenv("AUDIO_DAEMON_PORT", "8080"))
+AUDIO_DAEMON_URL = f"http://{AUDIO_DAEMON_HOST}:{AUDIO_DAEMON_PORT}"
 
 
-class UnixSocketHTTP:
-    """Simple HTTP client for Unix sockets."""
-    
-    def __init__(self, socket_path: str):
-        self.socket_path = socket_path
-    
-    def request(self, method: str, endpoint: str, data: dict = None) -> dict:
-        """Make HTTP request over Unix socket."""
-        import io
-        
-        # Create socket connection
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
-            sock.connect(self.socket_path)
-            sock.settimeout(10.0)
-            
-            # Build HTTP request
-            body = json.dumps(data).encode() if data else b""
-            request_lines = [
-                f"{method} {endpoint} HTTP/1.1",
-                f"Host: localhost",
-                f"Content-Type: application/json",
-                f"Content-Length: {len(body)}",
-                "Connection: close",
-                "",
-                ""
-            ]
-            request = "\r\n".join(request_lines).encode() + body
-            
-            # Send request
-            sock.sendall(request)
-            
-            # Receive response
-            response = b""
-            while True:
-                chunk = sock.recv(4096)
-                if not chunk:
-                    break
-                response += chunk
-            
-            # Parse response
-            response_text = response.decode('utf-8', errors='ignore')
-            
-            # Split headers and body
-            if '\r\n\r\n' in response_text:
-                headers, body = response_text.split('\r\n\r\n', 1)
-            elif '\n\n' in response_text:
-                headers, body = response_text.split('\n\n', 1)
-            else:
-                raise Exception("Invalid HTTP response")
-            
-            # Parse JSON body
-            try:
-                return json.loads(body)
-            except json.JSONDecodeError:
-                raise Exception(f"Invalid JSON response: {body[:200]}")
-                
-        finally:
-            sock.close()
-
-
-async def call_audio_daemon(method: str, endpoint: str, data: dict = None) -> dict:
-    """Make HTTP request to Audio Daemon via Unix socket."""
-    socket_path = AUDIO_DAEMON_SOCKET
-    
-    # Check if socket exists
-    if not os.path.exists(socket_path):
-        raise HTTPException(
-            status_code=503,
-            detail="Audio daemon not available. Please ensure the audio daemon is running on the host."
-        )
+def call_audio_daemon_http(method: str, endpoint: str, data: dict = None) -> dict:
+    """Make HTTP request to Audio Daemon via TCP."""
+    url = f"{AUDIO_DAEMON_URL}{endpoint}"
     
     try:
-        client = UnixSocketHTTP(socket_path)
-        return client.request(method, endpoint, data)
-    except HTTPException:
-        raise
+        if method == "GET":
+            req = urllib.request.Request(url, method="GET")
+        else:
+            body = json.dumps(data).encode() if data else b""
+            req = urllib.request.Request(
+                url,
+                data=body,
+                method=method,
+                headers={"Content-Type": "application/json"}
+            )
+        
+        with urllib.request.urlopen(req, timeout=10.0) as response:
+            return json.loads(response.read().decode())
+            
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode() if e.read() else "{}"
+        try:
+            error_json = json.loads(error_body)
+            raise HTTPException(status_code=e.code, detail=error_json.get("error", error_body))
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=e.code, detail=error_body or str(e))
+    except urllib.error.URLError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Audio daemon not available at {AUDIO_DAEMON_URL}. Please ensure the audio daemon is running on the host."
+        )
     except Exception as e:
         raise HTTPException(
             status_code=502,
@@ -168,7 +125,7 @@ async def start_recording(
     
     # Call audio daemon to start recording
     try:
-        daemon_response = await call_audio_daemon(
+        daemon_response = call_audio_daemon_http(
             "POST",
             "/start",
             {"meeting_id": str(meeting.id)}
@@ -204,9 +161,13 @@ async def start_recording(
 @router.post("/stop", response_model=StopRecordingResponse)
 async def stop_recording(db: AsyncSession = Depends(get_db)):
     """Stop the current recording."""
-    # Find the currently recording meeting
+    # Find the currently recording meeting (most recent one)
+    from sqlalchemy import desc
     result = await db.execute(
-        select(Meeting).where(Meeting.status == "recording")
+        select(Meeting)
+        .where(Meeting.status == "recording")
+        .order_by(desc(Meeting.started_at))
+        .limit(1)
     )
     meeting = result.scalar_one_or_none()
     
@@ -215,7 +176,7 @@ async def stop_recording(db: AsyncSession = Depends(get_db)):
     
     # Call audio daemon to stop recording
     try:
-        daemon_response = await call_audio_daemon("POST", "/stop")
+        daemon_response = call_audio_daemon_http("POST", "/stop")
         
         if not daemon_response.get("success"):
             raise HTTPException(
@@ -273,7 +234,7 @@ async def stop_recording(db: AsyncSession = Depends(get_db)):
 async def get_recording_status():
     """Get current recording status."""
     try:
-        daemon_response = await call_audio_daemon("GET", "/status")
+        daemon_response = call_audio_daemon_http("GET", "/status")
         
         return RecordingStatusResponse(
             is_recording=daemon_response.get("is_recording", False),

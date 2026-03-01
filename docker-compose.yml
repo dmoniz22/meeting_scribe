@@ -47,7 +47,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-change-me-in-production}
-      AUDIO_DAEMON_SOCKET: /tmp/meetscribe-audio.sock
+      # TCP Audio Daemon connection (host.docker.internal maps to host)
+      AUDIO_DAEMON_HOST: host.docker.internal
+      AUDIO_DAEMON_PORT: 8081
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       WHISPER_MODEL: ${WHISPER_MODEL:-medium}
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
@@ -58,9 +60,11 @@ services:
       RECORDINGS_PATH: /data/recordings
     volumes:
       - ./data/recordings:/data/recordings
-      - /tmp/meetscribe-audio.sock:/tmp/meetscribe-audio.sock
+      - ./backend:/app
     ports:
-      - "8000:8000"
+      - "8003:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy
@@ -75,6 +79,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile.worker
     container_name: meetscribe-worker
+    runtime: nvidia
     environment:
       DATABASE_URL: postgresql+asyncpg://meetscribe:Birdsey5%40@db:5432/meetscribe
       REDIS_URL: redis://redis:6379/0
@@ -88,8 +93,13 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
       RECORDINGS_PATH: /data/recordings
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
     volumes:
       - ./data/recordings:/data/recordings
+      - ./backend:/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy
@@ -97,13 +107,6 @@ services:
         condition: service_healthy
     networks:
       - meetscribe-network
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
 
   frontend:
     build:
@@ -111,8 +114,8 @@ services:
       dockerfile: Dockerfile
     container_name: meetscribe-frontend
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
-      NEXT_PUBLIC_WS_URL: ws://localhost:8000
+      NEXT_PUBLIC_API_URL: http://localhost:8003
+      NEXT_PUBLIC_WS_URL: ws://localhost:8003
     ports:
       - "3000:3000"
     depends_on:

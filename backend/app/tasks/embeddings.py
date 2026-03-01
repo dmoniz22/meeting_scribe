@@ -63,12 +63,16 @@ def generate_embeddings(self, meeting_id: str):
     print(f"Generating embeddings for meeting: {meeting_id}")
     print(f"{'='*60}\n")
     
+    # Create a new event loop for this task
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
     try:
         # Load model
         model = get_embedding_model()
         
         # Generate embeddings
-        result = asyncio.run(_generate_embeddings_async(meeting_id, model))
+        result = loop.run_until_complete(_generate_embeddings_async(meeting_id, model))
         
         print(f"\n{'='*60}")
         print(f"✓ Embeddings generated: {result['segments']} segments, {result['notes']} notes")
@@ -83,6 +87,14 @@ def generate_embeddings(self, meeting_id: str):
     except Exception as e:
         print(f"✗ Error generating embeddings: {e}")
         raise self.retry(exc=e)
+    finally:
+        # Clean up the event loop
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
+        except:
+            pass
+        asyncio.set_event_loop(None)
 
 
 async def _generate_embeddings_async(meeting_id: str, model):

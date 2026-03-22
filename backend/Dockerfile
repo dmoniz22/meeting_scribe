@@ -29,6 +29,11 @@ RUN pip install --no-cache-dir -r requirements.worker.txt
 
 COPY . .
 
+RUN chmod +x /app/start_api.sh
+
 EXPOSE 8000
 
-CMD ["sh", "-c", "python3.12 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 & celery -A app.celery_app worker -l info -Q high,default,low --concurrency=2; wait"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8000/api/v1/health || exit 1
+
+CMD ["sh", "-c", "/app/start_api.sh & celery -A app.celery_app worker -l info -Q high,default,low --concurrency=2; wait"]

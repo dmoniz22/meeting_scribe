@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { Mic, Trash2, FileText, CheckCircle2 } from "lucide-react";
+import { Mic, Trash2, FileText, CheckCircle2, Loader2 } from "lucide-react";
 import Badge from "../ui/Badge";
 import { Clock, Calendar } from "lucide-react";
 import type { Meeting } from "@/app/lib/constants";
-import { STATUS_CONFIG, NOTE_TYPES } from "@/app/lib/constants";
+import { STATUS_CONFIG } from "@/app/lib/constants";
 import { formatDuration, formatDate } from "@/app/lib/format";
 
 interface MeetingCardProps {
@@ -15,13 +15,19 @@ interface MeetingCardProps {
 
 export default function MeetingCard({ meeting, onDelete }: MeetingCardProps) {
   const statusConfig = STATUS_CONFIG[meeting.status as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.idle;
-  
+
   const getStatusIcon = () => {
     switch (meeting.status) {
       case "recording":
         return <Mic className="w-5 h-5 text-rose-600" />;
+      case "transcribing":
+        return <Loader2 className="w-5 h-5 text-amber-600 animate-spin" />;
+      case "summarizing":
+        return <Loader2 className="w-5 h-5 text-purple-600 animate-spin" />;
       case "completed":
         return <CheckCircle2 className="w-5 h-5 text-emerald-600" />;
+      case "recorded":
+        return <FileText className="w-5 h-5 text-blue-600" />;
       default:
         return <FileText className="w-5 h-5 text-slate-600" />;
     }
@@ -31,10 +37,14 @@ export default function MeetingCard({ meeting, onDelete }: MeetingCardProps) {
     switch (meeting.status) {
       case "recording":
         return "bg-rose-100";
-      case "processing":
+      case "transcribing":
         return "bg-amber-100";
+      case "summarizing":
+        return "bg-purple-100";
       case "completed":
         return "bg-emerald-100";
+      case "recorded":
+        return "bg-blue-100";
       default:
         return "bg-slate-100";
     }

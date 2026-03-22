@@ -2,12 +2,13 @@
 
 import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
-import { ArrowLeft, Play, Pause } from "lucide-react";
+import { ArrowLeft, Play, Pause, FileText, Sparkles, Loader2 } from "lucide-react";
 import Card from "../ui/Card";
 import Button from "../ui/Button";
 import Badge from "../ui/Badge";
 import { formatTime, formatDateTime } from "@/app/lib/format";
 import { API_URL, STATUS_CONFIG, NOTE_TYPES } from "@/app/lib/constants";
+import { recordingsApi } from "@/app/lib/api";
 import type { Meeting, Note, TranscriptSegment, Summary } from "@/app/lib/constants";
 
 interface MeetingDetailProps {
@@ -29,6 +30,10 @@ export default function MeetingDetail({ meetingId }: MeetingDetailProps) {
   const [noteContent, setNoteContent] = useState("");
   const [noteType, setNoteType] = useState("general");
   const [addingNote, setAddingNote] = useState(false);
+
+  // Transcription/summarization state
+  const [transcribing, setTranscribing] = useState(false);
+  const [summarizing, setSummarizing] = useState(false);
 
   const API_URL_VALUE = API_URL;
 
@@ -86,6 +91,34 @@ export default function MeetingDetail({ meetingId }: MeetingDetailProps) {
       fetchMeeting();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete note");
+    }
+  };
+
+  const handleTranscribe = async () => {
+    setTranscribing(true);
+    setError(null);
+    try {
+      const { data, error } = await recordingsApi.transcribe(meetingId);
+      if (error) throw new Error(error);
+      setMeeting((prev) => prev ? { ...prev, status: "transcribing" } : prev);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start transcription");
+    } finally {
+      setTranscribing(false);
+    }
+  };
+
+  const handleSummarize = async () => {
+    setSummarizing(true);
+    setError(null);
+    try {
+      const { data, error } = await recordingsApi.summarize(meetingId);
+      if (error) throw new Error(error);
+      setMeeting((prev) => prev ? { ...prev, status: "summarizing" } : prev);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start summarization");
+    } finally {
+      setSummarizing(false);
     }
   };
 
@@ -172,6 +205,45 @@ export default function MeetingDetail({ meetingId }: MeetingDetailProps) {
           {formatDateTime(meeting.created_at)}
           {meeting.duration_seconds && ` • ${formatTime(meeting.duration_seconds)}`}
         </p>
+        {/* Action buttons */}
+        {meeting.audio_path && (
+          <div className="flex gap-3 mt-4">
+            {(meeting.status === "recorded" || meeting.status === "transcribed" || meeting.status === "completed") && !meeting.transcript_segments?.length && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleTranscribe}
+                disabled={transcribing}
+                leftIcon={transcribing ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+              >
+                {transcribing ? "Transcribing..." : "Transcribe"}
+              </Button>
+            )}
+            {(meeting.status === "transcribed" || meeting.status === "completed") && meeting.transcript_segments?.length && !meeting.summary && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleSummarize}
+                disabled={summarizing}
+                leftIcon={summarizing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              >
+                {summarizing ? "Summarizing..." : "Summarize"}
+              </Button>
+            )}
+            {meeting.status === "transcribing" && (
+              <div className="flex items-center gap-2 text-amber-600 text-sm">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Transcription in progress...
+              </div>
+            )}
+            {meeting.status === "summarizing" && (
+              <div className="flex items-center gap-2 text-purple-600 text-sm">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Summarization in progress...
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {error && (
@@ -250,7 +322,7 @@ export default function MeetingDetail({ meetingId }: MeetingDetailProps) {
         <Card padding="none">
           {!meeting.transcript_segments?.length ? (
             <div className="p-8 text-center text-slate-500">
-              {meeting.status === "processing"
+              {meeting.status === "transcribing"
                 ? "Transcription in progress..."
                 : "No transcript available"}
             </div>
@@ -318,7 +390,7 @@ export default function MeetingDetail({ meetingId }: MeetingDetailProps) {
             </div>
           ) : (
             <div className="text-center text-slate-500 py-8">
-              {meeting.status === "processing"
+              {meeting.status === "summarizing"
                 ? "Summary being generated..."
                 : "No summary available"}
             </div>

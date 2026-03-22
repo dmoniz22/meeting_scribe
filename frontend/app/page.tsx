@@ -124,7 +124,6 @@ export default function Dashboard() {
     try {
       const { data, error } = await daemonApi.restart();
       if (error) throw new Error(error);
-      if (data?.error) throw new Error(data.error);
       await fetchDaemonStatus();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to restart audio daemon");

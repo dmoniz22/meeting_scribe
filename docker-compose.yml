@@ -40,6 +40,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: meetscribe-api
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://meetscribe:${POSTGRES_PASSWORD:-Birdsey5%40}@db:5432/meetscribe
       REDIS_URL: redis://redis:6379/0
@@ -48,21 +49,22 @@ services:
       AUDIO_DAEMON_HOST: host.docker.internal
       AUDIO_DAEMON_PORT: 9000
       OLLAMA_BASE_URL: http://host.docker.internal:11434
-      WHISPER_MODEL: ${WHISPER_MODEL:-medium}
-      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
-      WHISPER_BATCH_SIZE: ${WHISPER_BATCH_SIZE:-8}
-      HF_TOKEN: ${HF_TOKEN:-}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
       RECORDINGS_PATH: /data/recordings
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
     volumes:
       - ./data/recordings:/data/recordings
+      - ./backend/.env:/app/.env
     ports:
       - "8005:8000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     depends_on:
       db:
         condition: service_healthy

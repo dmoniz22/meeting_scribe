@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     OLLAMA_MODEL: str = "llama3.1:8b"
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
 
+    # OpenRouter (optional alternative to local Ollama)
+    OPENROUTER_API_KEY: Optional[str] = None
+    OPENROUTER_MODEL: str = "openai/gpt-4o-mini"
+
+    # LLM provider for summarization: "ollama" or "openrouter"
+    LLM_PROVIDER: str = "ollama"
+
     GOOGLE_CLIENT_ID: Optional[str] = None
     GOOGLE_CLIENT_SECRET: Optional[str] = None
     OUTLOOK_CLIENT_ID: Optional[str] = None

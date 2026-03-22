@@ -11,18 +11,14 @@ import numpy as np
 from typing import List
 from uuid import UUID
 from celery import shared_task
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy import select
 
 from app.core.config import settings
+from app.core.sessions import get_session_factory
 from app.models.meeting import TranscriptSegment, Note, Meeting
 
-engine = create_async_engine(settings.DATABASE_URL, future=True, echo=False)
-AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+AsyncSessionLocal = get_session_factory()
 
-# Global model cache
 _embedding_model = None
 
 
@@ -31,6 +27,7 @@ def get_embedding_model():
     global _embedding_model
     if _embedding_model is None:
         from sentence_transformers import SentenceTransformer
+
         print(f"Loading embedding model: {settings.EMBEDDING_MODEL}")
         _embedding_model = SentenceTransformer(settings.EMBEDDING_MODEL)
         print("✓ Embedding model loaded")
@@ -53,42 +50,36 @@ def clear_embedding_model():
 def generate_embeddings(self, meeting_id: str):
     """
     Generate embeddings for all transcript segments and notes in a meeting.
-    
+
     Args:
         meeting_id: UUID of the meeting
     """
     import asyncio
-    
-    print(f"\n{'='*60}")
+
+    print(f"\n{'=' * 60}")
     print(f"Generating embeddings for meeting: {meeting_id}")
-    print(f"{'='*60}\n")
-    
-    # Create a new event loop for this task
+    print(f"{'=' * 60}\n")
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    
+
     try:
-        # Load model
         model = get_embedding_model()
-        
-        # Generate embeddings
+
         result = loop.run_until_complete(_generate_embeddings_async(meeting_id, model))
-        
-        print(f"\n{'='*60}")
-        print(f"✓ Embeddings generated: {result['segments']} segments, {result['notes']} notes")
-        print(f"{'='*60}\n")
-        
-        # Trigger summarization after embeddings
-        from app.tasks.summarization import summarize_meeting
-        summarize_meeting.delay(meeting_id)
-        
+
+        print(f"\n{'=' * 60}")
+        print(
+            f"✓ Embeddings generated: {result['segments']} segments, {result['notes']} notes"
+        )
+        print(f"{'=' * 60}\n")
+
         return result
-        
+
     except Exception as e:
         print(f"✗ Error generating embeddings: {e}")
         raise self.retry(exc=e)
     finally:
-        # Clean up the event loop
         try:
             loop.run_until_complete(loop.shutdown_asyncgens())
             loop.close()
@@ -102,64 +93,59 @@ async def _generate_embeddings_async(meeting_id: str, model):
     async with AsyncSessionLocal() as session:
         try:
             meeting_uuid = UUID(meeting_id)
-            
-            # Get transcript segments
+
             segments_result = await session.execute(
                 select(TranscriptSegment).where(
                     TranscriptSegment.meeting_id == meeting_uuid,
-                    TranscriptSegment.embedding.is_(None)
+                    TranscriptSegment.embedding.is_(None),
                 )
             )
             segments = segments_result.scalars().all()
-            
+
             print(f"Processing {len(segments)} transcript segments...")
-            
-            # Generate embeddings for segments in batches
+
             batch_size = 32
             for i in range(0, len(segments), batch_size):
-                batch = segments[i:i + batch_size]
+                batch = segments[i : i + batch_size]
                 texts = [seg.text for seg in batch]
-                
-                # Generate embeddings
+
                 embeddings = model.encode(texts, convert_to_numpy=True)
-                
-                # Store embeddings as lists for JSON serialization
+
                 for seg, embedding in zip(batch, embeddings):
                     seg.embedding = embedding.tolist()
-                
+
                 if (i + batch_size) % 100 == 0:
-                    print(f"  Processed {min(i + batch_size, len(segments))}/{len(segments)} segments")
-            
-            # Get notes
+                    print(
+                        f"  Processed {min(i + batch_size, len(segments))}/{len(segments)} segments"
+                    )
+
             notes_result = await session.execute(
                 select(Note).where(
-                    Note.meeting_id == meeting_uuid,
-                    Note.embedding.is_(None)
+                    Note.meeting_id == meeting_uuid, Note.embedding.is_(None)
                 )
             )
             notes = notes_result.scalars().all()
-            
+
             print(f"Processing {len(notes)} notes...")
-            
-            # Generate embeddings for notes
+
             for i in range(0, len(notes), batch_size):
-                batch = notes[i:i + batch_size]
+                batch = notes[i : i + batch_size]
                 texts = [note.content for note in batch]
-                
+
                 embeddings = model.encode(texts, convert_to_numpy=True)
-                
+
                 for note, embedding in zip(batch, embeddings):
                     note.embedding = embedding.tolist()
-            
+
             await session.commit()
-            
+
             return {
                 "success": True,
                 "meeting_id": meeting_id,
                 "segments": len(segments),
-                "notes": len(notes)
+                "notes": len(notes),
             }
-            
+
         except Exception as e:
             await session.rollback()
             raise

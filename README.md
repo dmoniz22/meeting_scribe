@@ -25,14 +25,15 @@ A bot-less meeting transcription and intelligence platform built with FastAPI, N
    # Edit .env with your settings
    ```
 
-3. **Start the services:**
+3. **Start Ollama on the host** (if not already running):
    ```bash
-   docker compose up -d
+   ollama serve
+   ollama pull llama3.1:8b
    ```
 
-4. **Pull the Ollama model:**
+4. **Start the services:**
    ```bash
-   docker compose exec ollama ollama pull llama3.1:8b
+   docker compose up -d
    ```
 
 5. **Verify the installation:**
@@ -45,9 +46,12 @@ A bot-less meeting transcription and intelligence platform built with FastAPI, N
 | Service | URL | Description |
 |---------|-----|-------------|
 | Frontend | http://localhost:3000 | Next.js web dashboard |
-| API | http://localhost:8003 | FastAPI REST API |
+| API | http://localhost:8003 | FastAPI REST API + Celery worker |
 | API Docs | http://localhost:8003/docs | Swagger UI |
-| Database | localhost:5432 | PostgreSQL 17 + pgvector |
+| Database | localhost:5434 | PostgreSQL 17 + pgvector |
+| Redis | localhost:6380 | Job queue & pub/sub |
+
+**Note**: Ollama runs on the host machine (not in Docker) at http://localhost:11434
 | Redis | localhost:6379 | Job queue & pub/sub |
 | Ollama | http://localhost:11434 | Local LLM inference |
 
@@ -137,6 +141,21 @@ The Audio Daemon runs on the host (not in Docker) to access PipeWire:
    - `chunk_000.wav`, `chunk_001.wav`, etc. (30-second chunks)
    - `full_recording.wav` (concatenated after stop)
 
+5. **Start transcription and embeddings** (after recording is stopped):
+   ```bash
+   MEETING_ID="<meeting-id-from-previous-step>"
+   curl -X POST http://localhost:8003/api/v1/recordings/transcribe \
+     -H "Content-Type: application/json" \
+     -d "{\"meeting_id\": \"$MEETING_ID\"}"
+   ```
+
+6. **Start summarization** (after transcription is complete):
+   ```bash
+   curl -X POST http://localhost:8003/api/v1/recordings/summarize \
+     -H "Content-Type: application/json" \
+     -d "{\"meeting_id\": \"$MEETING_ID\"}"
+   ```
+
 ## Project Structure
 
 ```
@@ -171,8 +190,19 @@ meeting_scribe/
 
 ### Recording
 - `POST /api/v1/recordings/start` - Start recording
-- `POST /api/v1/recordings/stop` - Stop recording
+- `POST /api/v1/recordings/stop` - Stop recording (saves audio, does NOT auto-transcribe)
 - `GET /api/v1/recordings/status` - Get recording status
+
+### Transcription & Summarization (Manual Triggers)
+- `POST /api/v1/recordings/transcribe` - Start transcription + embeddings (requires recorded meeting)
+- `POST /api/v1/recordings/summarize` - Start summarization (requires transcribed meeting)
+
+### Meeting Status Flow
+```
+idle → recording → recorded → transcribing → transcribed → summarizing → completed
+                                                    ↓
+                                                failed
+```
 
 ### WebSocket
 - `WS /ws/meetings/{meeting_id}` - Real-time audio levels and events

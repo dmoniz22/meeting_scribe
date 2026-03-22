@@ -47,6 +47,13 @@ env/
 *.log
 logs/
 
+# PID files
+*.pid
+
+# Environment hybrids
+*.env.hybrid
+.env.hybrid
+
 # Node.js
 node_modules/
 .next/

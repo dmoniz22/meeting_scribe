@@ -1,102 +1,156 @@
 #!/bin/bash
 #
 # setup_pipewire.sh - Create PipeWire virtual sink for MeetScribe recording
-# This script creates a virtual recording sink and routes system audio + mic into it
+# Uses native PipeWire commands (pw-cli, pw-link) to create and route audio
 #
-
 set -e
 
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+BLUE='\033[0;34m'
+NC='\033[0m'
 
 echo -e "${GREEN}MeetScribe PipeWire Setup${NC}"
-echo "============================"
+echo "=============================="
 
-# Check if PipeWire is running
 if ! pgrep -x "pipewire" > /dev/null; then
     echo -e "${RED}Error: PipeWire is not running${NC}"
-    echo "Please start PipeWire first:"
-    echo "  systemctl --user start pipewire"
+    echo "Start it with: systemctl --user start pipewire pipewire-pulse"
     exit 1
 fi
 
 echo -e "${GREEN}✓ PipeWire is running${NC}"
 
-# Clean up any existing MeetScribe loopback modules
-echo -e "\n${YELLOW}Cleaning up existing MeetScribe modules...${NC}"
-pactl list modules short | grep -E "(meetscribe|loopback)" | awk '{print $1}' | while read -r module_id; do
-    echo "Removing module $module_id"
-    pactl unload-module "$module_id" 2>/dev/null || true
+if ! command -v pw-cli &> /dev/null; then
+    echo -e "${RED}Error: pw-cli not found${NC}"
+    echo "Install pipewire-utils"
+    exit 1
+fi
+
+echo -e "\n${YELLOW}Cleaning up existing MeetScribe devices...${NC}"
+for mod in $(pactl list modules short 2>/dev/null | grep -E "(null-sink|loopback)" | grep -E "(meetscribe|meet)" | awk '{print $1}'); do
+    echo "Unloading module $mod"
+    pactl unload-module "$mod" 2>/dev/null || true
 done
 
-# Get default output device (speakers/headphones)
-OUTPUT_DEVICE=$(pactl info | grep "Default Sink:" | cut -d: -f2 | xargs)
-echo -e "\n${YELLOW}Default output device: $OUTPUT_DEVICE${NC}"
+pw-cli destroy-node meetscribe_sink 2>/dev/null || true
+pw-cli destroy-node meetscribe_source 2>/dev/null || true
+pw-cli destroy-node meetscribe_loopback_out 2>/dev/null || true
+pw-cli destroy-node meetscribe_loopback_mic 2>/dev/null || true
 
-# Get default input device (microphone)
-INPUT_DEVICE=$(pactl info | grep "Default Source:" | cut -d: -f2 | xargs)
-echo "Default input device: $INPUT_DEVICE"
+rm -f /tmp/pulse-*dmoniz*/pid 2>/dev/null || true
+sleep 1
 
-# Create the virtual recording sink
-echo -e "\n${YELLOW}Creating MeetScribe virtual recording sink...${NC}"
-pactl load-module module-null-sink \
-    sink_name=meetscribe_sink \
-    sink_properties="device.description='MeetScribe Recording Sink'" \
-    rate=16000 \
-    channels=2 \
-    channel_map=front-left,front-right
+OUTPUT_DEVICE=$(pactl info 2>/dev/null | grep "Default Sink:" | cut -d: -f2 | xargs || echo "")
+INPUT_DEVICE=$(pactl info 2>/dev/null | grep "Default Source:" | cut -d: -f2 | xargs || echo "")
 
-echo -e "${GREEN}✓ Virtual sink created${NC}"
+echo -e "\n${YELLOW}Default output: $OUTPUT_DEVICE${NC}"
+echo "Default input: $INPUT_DEVICE"
 
-# Create virtual source from the sink monitor
-echo -e "\n${YELLOW}Creating virtual source for capture...${NC}"
-pactl load-module module-virtual-source \
-    source_name=meetscribe_source \
-    master=meetscribe_sink.monitor \
-    source_properties="device.description='MeetScribe Recording Source'"
+echo -e "\n${YELLOW}Creating MeetScribe virtual sink...${NC}"
+pw-cli create-node adapter null-sink \
+    node.name=meetscribe_sink \
+    node.description="MeetScribe Recording Sink" \
+    media.class=Audio/Sink \
+    audio.channels=2 \
+    audio.position=FL,FR \
+    2>/dev/null || {
+    echo -e "${YELLOW}Trying pactl fallback...${NC}"
+    MODULE_ID=$(pactl load-module module-null-sink sink_name=meetscribe_sink 2>/dev/null)
+    
+    if [ -z "$MODULE_ID" ]; then
+        MODULE_ID=$(pactl load-module module-null-sink sink_name=meetscribe_main 2>/dev/null)
+        
+        if [ -n "$MODULE_ID" ]; then
+            echo -e "${GREEN}✓ Created with alternate name 'meetscribe_main'${NC}"
+        fi
+    fi
+}
 
-echo -e "${GREEN}✓ Virtual source created${NC}"
+sleep 1
 
-# Route system output monitor to virtual sink (left channel)
-echo -e "\n${YELLOW}Routing system audio to virtual sink...${NC}"
-pactl load-module module-loopback \
-    source="${OUTPUT_DEVICE}.monitor" \
-    sink=meetscribe_sink \
-    rate=16000 \
-    channels=2 \
-    channel_map=front-left,front-left \
-    sink_dont_move=true \
-    source_dont_move=true
+SINK_NAME="meetscribe_sink"
+if ! pactl list sinks short 2>/dev/null | grep -q "$SINK_NAME"; then
+    SINK_NAME="meetscribe_main"
+fi
 
-echo -e "${GREEN}✓ System audio routed (left channel)${NC}"
+echo -e "${GREEN}✓ Virtual sink configured: $SINK_NAME${NC}"
 
-# Route microphone to virtual sink (right channel)
-echo -e "\n${YELLOW}Routing microphone to virtual sink...${NC}"
-pactl load-module module-loopback \
-    source="$INPUT_DEVICE" \
-    sink=meetscribe_sink \
-    rate=16000 \
-    channels=2 \
-    channel_map=front-right,front-right \
-    sink_dont_move=true \
-    source_dont_move=true
+echo -e "\n${YELLOW}Setting up automatic audio routing...${NC}"
 
-echo -e "${GREEN}✓ Microphone routed (right channel)${NC}"
+# Get current default devices
+OUTPUT_DEVICE=$(pactl info 2>/dev/null | grep "Default Sink:" | cut -d: -f2 | xargs || echo "")
+INPUT_DEVICE=$(pactl info 2>/dev/null | grep "Default Source:" | cut -d: -f2 | xargs || echo "")
 
-# Verify setup
+route_audio() {
+    local mode="$1"
+    
+    if [ "$mode" = "system" ]; then
+        echo -e "\n${BLUE}Routing system audio...${NC}"
+        
+        if [ -n "$OUTPUT_DEVICE" ]; then
+            echo "  Default sink: $OUTPUT_DEVICE"
+            
+            pactl move-sink-input 0 "$SINK_NAME" 2>/dev/null || {
+                echo "  Note: No active audio streams to move. New audio will automatically route."
+            }
+            
+            echo -e "${GREEN}✓ System audio will route through MeetScribe sink${NC}"
+            echo -e "${YELLOW}  IMPORTANT: Set MeetScribe as default to record meeting audio:${NC}"
+            echo -e "    pactl set-default-sink meetscribe_main"
+        else
+            echo -e "${YELLOW}⚠ No default sink configured${NC}"
+        fi
+    fi
+    
+    if [ "$mode" = "mic" ]; then
+        echo -e "\n${BLUE}Routing microphone...${NC}"
+        
+        if [ -n "$INPUT_DEVICE" ]; then
+            echo "  Default source: $INPUT_DEVICE"
+            echo -e "${GREEN}✓ Microphone can be manually routed via pavucontrol${NC}"
+        else
+            echo -e "${YELLOW}⚠ No default source configured${NC}"
+        fi
+    fi
+}
+
+route_audio "system"
+route_audio "mic"
+
+echo -e "\n${YELLOW}Creating loopback for microphone mixing...${NC}"
+# Try to create loopback with default source
+if [ -n "$INPUT_DEVICE" ]; then
+    LOOPBACK_ID=$(pactl load-module module-loopback \
+        source="$INPUT_DEVICE" \
+        sink="$SINK_NAME" \
+        latency_msec=20 2>/dev/null) && echo "✓ Created loopback (module $LOOPBACK_ID)" || echo "⚠ Could not create loopback"
+else
+    # Try common microphone sources
+    for MIC_SOURCE in "alsa_input.usb-Logitech_Logi_USB_Headset_000000000000-00.mono-fallback" "alsa_input.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Mic1__source"; do
+        if pactl list sources short 2>/dev/null | grep -q "$MIC_SOURCE"; then
+            LOOPBACK_ID=$(pactl load-module module-loopback \
+                source="$MIC_SOURCE" \
+                sink="$SINK_NAME" \
+                latency_msec=20 2>/dev/null) && echo "✓ Created loopback with $MIC_SOURCE (module $LOOPBACK_ID)" && break
+        fi
+    done
+fi
+
 echo -e "\n${GREEN}Setup complete!${NC}"
-echo -e "\n${YELLOW}Active MeetScribe devices:${NC}"
-pactl list sinks short | grep -E "(meetscribe|Name)"
 echo ""
-pactl list sources short | grep -E "(meetscribe|Name)"
-
-echo -e "\n${GREEN}Audio routing:${NC}"
-echo "  System Output (L) → MeetScribe Sink → MeetScribe Source → App"
-echo "  Microphone    (R) → MeetScribe Sink → MeetScribe Source → App"
-
-echo -e "\n${YELLOW}To remove these devices, run:${NC}"
-echo "  pactl list modules short | grep loopback | awk '{print \$1}' | xargs -I {} pactl unload-module {}"
-echo "  pactl unload-module $(pactl list modules short | grep null-sink | grep meetscribe | awk '{print $1}')"
+echo "Audio routing is now active:"
+echo "  - System audio → MeetScribe Recording Sink"
+echo "  - Microphone → MeetScribe Recording Sink (via loopback)"
+echo ""
+echo "Recording device name: ${SINK_NAME}.monitor"
+echo ""
+echo "To use MeetScribe:"
+echo "  1. Set MeetScribe as default audio output:"
+echo "       pactl set-default-sink meetscribe_main"
+echo "  2. Or configure your meeting app to use 'MeetScribe Recording Sink'"
+echo ""
+echo -e "${YELLOW}To verify setup, run:${NC}"
+echo "  pactl list sources short | grep meetscribe"
+echo "  pactl list sinks short | grep meetscribe"

@@ -1,0 +1,12 @@
+[Unit]
+Description=MeetScribe Audio Routing Setup
+After=pipewire.service easyeffects.service
+PartOf=pipewire.socket
+
+[Service]
+Type=oneshot
+ExecStart=%h/projects/meeting_transcriber/audio-daemon/setup_pipewire_easyeffects.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target

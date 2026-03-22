@@ -2,14 +2,23 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from app.core.config import settings
-from app.core.database import engine, Base
-from app.routers import meetings, health, recordings, search, websocket, meeting_detail, settings
+from app.core.config import settings, get_cors_origins
+from app.core.sessions import Base, get_engine
+from app.routers import (
+    meetings,
+    health,
+    recordings,
+    search,
+    websocket,
+    meeting_detail,
+    settings,
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
@@ -21,13 +30,14 @@ app = FastAPI(
     title="MeetScribe API",
     description="Local-First Linux Meeting Assistant",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # CORS middleware
+cors_origins = get_cors_origins()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure properly in production
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -45,8 +55,4 @@ app.include_router(settings.router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
-    return {
-        "message": "Welcome to MeetScribe API",
-        "version": "1.0.0",
-        "docs": "/docs"
-    }
+    return {"message": "Welcome to MeetScribe API", "version": "1.0.0", "docs": "/docs"}

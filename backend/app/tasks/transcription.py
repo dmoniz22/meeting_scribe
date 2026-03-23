@@ -200,23 +200,47 @@ def transcribe_meeting(self, meeting_id: str, audio_path: str):
 
             os.environ["HF_TOKEN"] = settings.HF_TOKEN
 
-        model = whisperx.load_model(
+        from faster_whisper import WhisperModel
+
+        model = WhisperModel(
             settings.WHISPER_MODEL,
             device=device,
             compute_type=compute_type,
-            language="en",
-            asr_options={"multilingual": False, "hotwords": []},
         )
 
         print("  ✓ Model loaded")
         job.update_progress("transcription", 20, "processing", {"step": "transcribing"})
 
         print("\n  Loading audio...")
-        audio = whisperx.load_audio(str(audio_file))
+        import soundfile as sf
+        import numpy as np
+
+        audio_data, sr = sf.read(str(audio_file))
+        if sr != 16000:
+            import resampy
+
+            audio_data = resampy.resample(audio_data.astype(float), sr, 16000).astype(
+                np.float32
+            )
+        if audio_data.ndim > 1:
+            audio_data = audio_data.mean(axis=1)
+        audio = audio_data.astype(np.float32)
 
         print("  Transcribing...")
-        result = model.transcribe(audio, batch_size=settings.WHISPER_BATCH_SIZE)
+        segments_iter, info = model.transcribe(
+            audio, language="en", word_timestamps=True
+        )
+        segments = []
+        for seg in segments_iter:
+            segments.append(
+                {
+                    "start": seg.start,
+                    "end": seg.end,
+                    "text": seg.text.strip(),
+                }
+            )
 
+        result = {"segments": segments, "language": info.language}
         print(f"  ✓ Transcription complete: {len(result['segments'])} segments")
         job.update_progress(
             "transcription",
@@ -236,21 +260,23 @@ def transcribe_meeting(self, meeting_id: str, audio_path: str):
         print("\nStep 2/3: Aligning timestamps...")
         job.update_progress("transcription", 60, "processing", {"step": "aligning"})
 
-        model_a, metadata = whisperx.load_align_model(
-            language_code=result["language"], device=device
-        )
-        result = whisperx.align(
-            result["segments"],
-            model_a,
-            metadata,
-            audio,
-            device,
-            return_char_alignments=False,
-        )
-
-        del model_a
-        clear_gpu_memory()
-        print("  ✓ Alignment complete")
+        try:
+            model_a, metadata = whisperx.load_align_model(
+                language_code=result["language"], device=device
+            )
+            result = whisperx.align(
+                result["segments"],
+                model_a,
+                metadata,
+                audio,
+                device,
+                return_char_alignments=False,
+            )
+            del model_a
+            clear_gpu_memory()
+            print("  ✓ Alignment complete")
+        except Exception as e:
+            print(f"  ⚠ Alignment skipped: {e}")
 
         print("\nStep 3/3: Speaker diarization...")
         job.update_progress("transcription", 70, "processing", {"step": "diarizing"})

@@ -195,6 +195,11 @@ def transcribe_meeting(self, meeting_id: str, audio_path: str):
         print(f"  Compute type: {compute_type}")
         print(f"  Model: {settings.WHISPER_MODEL}")
 
+        if settings.HF_TOKEN:
+            import os
+
+            os.environ["HF_TOKEN"] = settings.HF_TOKEN
+
         model = whisperx.load_model(
             settings.WHISPER_MODEL,
             device=device,

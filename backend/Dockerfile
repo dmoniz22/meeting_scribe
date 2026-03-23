@@ -31,6 +31,12 @@ COPY . .
 
 RUN chmod +x /app/start_api.sh
 
+# Pin faster-whisper compatible with whisperx 3.1.6
+RUN pip install --no-cache-dir "faster-whisper==1.1.1"
+
+# Patch whisperx for broken S3 VAD URL and faster-whisper compatibility
+RUN python3.12 /app/patch_whisperx.py
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

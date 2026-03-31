@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
-import { ArrowLeft, Play, Pause, FileText, Sparkles, Loader2 } from "lucide-react";
+import { ArrowLeft, Play, Pause, FileText, Sparkles, Loader2, Pencil, Check, X } from "lucide-react";
 import Card from "../ui/Card";
 import Button from "../ui/Button";
 import Badge from "../ui/Badge";
@@ -34,6 +34,10 @@ export default function MeetingDetail({ meetingId }: MeetingDetailProps) {
   // Transcription/summarization state
   const [transcribing, setTranscribing] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
+
+  // Title editing state
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
 
   const API_URL_VALUE = API_URL;
 
@@ -122,6 +126,30 @@ export default function MeetingDetail({ meetingId }: MeetingDetailProps) {
     }
   };
 
+  const startEditTitle = () => {
+    setTitleDraft(meeting?.title || "");
+    setEditingTitle(true);
+  };
+
+  const saveTitle = async () => {
+    if (!meeting || !titleDraft.trim()) return;
+    try {
+      const response = await fetch(`${API_URL_VALUE}/api/v1/meetings/${meetingId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: titleDraft.trim() }),
+      });
+      if (response.ok) {
+        setMeeting((prev) => prev ? { ...prev, title: titleDraft.trim() } : prev);
+      }
+    } catch {}
+    setEditingTitle(false);
+  };
+
+  const cancelEditTitle = () => {
+    setEditingTitle(false);
+  };
+
   const togglePlay = () => {
     if (audioRef.current) {
       if (isPlaying) {
@@ -197,8 +225,32 @@ export default function MeetingDetail({ meetingId }: MeetingDetailProps) {
       </Link>
 
       <div className="mb-6">
-        <div className="flex items-center gap-3 mb-2">
-          <h1 className="text-3xl font-bold text-slate-900">{meeting.title}</h1>
+          <div className="flex items-center gap-3 mb-2">
+            {editingTitle ? (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveTitle(); if (e.key === "Escape") cancelEditTitle(); }}
+                  className="text-3xl font-bold text-slate-900 border-b-2 border-blue-500 outline-none bg-transparent w-full max-w-lg"
+                  autoFocus
+                />
+                <button onClick={saveTitle} className="p-1 text-emerald-600 hover:bg-emerald-50 rounded"><Check className="w-5 h-5" /></button>
+                <button onClick={cancelEditTitle} className="p-1 text-slate-400 hover:bg-slate-100 rounded"><X className="w-5 h-5" /></button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 group">
+                <h1 className="text-3xl font-bold text-slate-900">{meeting.title}</h1>
+                <button
+                  onClick={startEditTitle}
+                  className="p-1 text-slate-400 hover:text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Rename"
+                >
+                  <Pencil className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           <Badge color={statusConfig.color}>{statusConfig.label}</Badge>
         </div>
         <p className="text-slate-500">

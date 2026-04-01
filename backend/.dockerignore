@@ -20,5 +20,6 @@ htmlcov
 .tox
 .DS_Store
 *.log
+*.pid
 uploads/
 recordings/

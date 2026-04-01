@@ -125,8 +125,55 @@ def patch_asr():
     print("  asr.py patched")
 
 
+def patch_vad_params():
+    """Patch whisperx/vad.py to handle pyannote 3.1 missing onset/offset params."""
+    path = "/usr/local/lib/python3.12/dist-packages/whisperx/vad.py"
+    if not os.path.exists(path):
+        print(f"  {path} not found, skipping")
+        return
+
+    with open(path) as f:
+        content = f.read()
+
+    if "VoiceActivitySegmentation" not in content:
+        print("  vad.py VoiceActivitySegmentation not found, skipping")
+        return
+
+    # Check if already patched
+    if "except ValueError:" in content:
+        print("  vad.py VAD params already patched")
+        return
+
+    old = """    hyperparameters = {"onset": vad_onset,
+                    "offset": vad_offset,
+                    "min_duration_on": 0.1,
+                    "min_duration_off": 0.1}
+    vad_pipeline = VoiceActivitySegmentation(segmentation=vad_model, device=torch.device(device))
+    vad_pipeline.instantiate(hyperparameters)"""
+
+    new = """    try:
+        hyperparameters = {"onset": vad_onset,
+                        "offset": vad_offset,
+                        "min_duration_on": 0.1,
+                        "min_duration_off": 0.1}
+        vad_pipeline = VoiceActivitySegmentation(segmentation=vad_model, device=torch.device(device))
+        vad_pipeline.instantiate(hyperparameters)
+    except ValueError:
+        vad_pipeline = VoiceActivitySegmentation(segmentation=vad_model, device=torch.device(device))
+        vad_pipeline.instantiate({})"""
+
+    if old in content:
+        content = content.replace(old, new)
+        with open(path, "w") as f:
+            f.write(content)
+        print("  vad.py VAD params patched")
+    else:
+        print("  vad.py VAD params pattern not found, may need manual fix")
+
+
 if __name__ == "__main__":
     print("Patching whisperx...")
     patch_vad()
     patch_asr()
+    patch_vad_params()
     print("Done!")

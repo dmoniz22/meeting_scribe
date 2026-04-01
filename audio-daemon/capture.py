@@ -230,14 +230,20 @@ class AudioCapture:
             sys_avail = self.system_buffer.qsize()
             mic_avail = self.mic_buffer.qsize()
 
-            if sys_avail == 0 or mic_avail == 0:
+            if sys_avail == 0 and mic_avail == 0:
                 time.sleep(0.001)
                 continue
 
-            n = min(sys_avail, mic_avail, 1024)
+            n = min(sys_avail or mic_avail, mic_avail or sys_avail, 1024)
 
-            system = self.system_buffer.read(n)
-            mic = self.mic_buffer.read(n)
+            system = (
+                self.system_buffer.read(n)
+                if sys_avail
+                else np.zeros(n, dtype=np.float32)
+            )
+            mic = (
+                self.mic_buffer.read(n) if mic_avail else np.zeros(n, dtype=np.float32)
+            )
 
             mono = np.clip((system + mic) * 0.5, -1.0, 1.0)
             audio_int16 = (mono * 32767).astype(np.int16)

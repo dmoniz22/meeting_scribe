@@ -2,7 +2,15 @@
 """Patch whisperx for compatibility with faster-whisper 1.1.1+ and broken S3 VAD URL."""
 
 import os
-import sys
+import subprocess
+
+
+def run(cmd):
+    print(f"  Running: {cmd[:80]}...", flush=True)
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    if result.returncode != 0 and result.stderr:
+        print(f"  Warning: {result.stderr.strip()[:200]}")
+    return result.returncode == 0
 
 
 def patch_vad():
@@ -15,91 +23,57 @@ def patch_vad():
     with open(path) as f:
         content = f.read()
 
-    if (
-        "hf_hub_download" in content
-        and "hashlib" not in content.split("hf_hub_download")[1].split("\n\n")[0]
-    ):
+    if "hf_hub_download" in content and "urllib.request.urlopen" not in content:
         print("  vad.py already patched")
         return
 
-    # Replace download + hash check block
-    old = """    if not os.path.isfile(model_fp):
-        with urllib.request.urlopen(VAD_SEGMENTATION_URL) as source, open(model_fp, "wb") as output:
-            with tqdm(
-                total=int(source.info().get("Content-Length")),
-                ncols=80,
-                unit="iB",
-                unit_scale=True,
-                unit_divisor=1024,
-            ) as loop:
-                while True:
-                    buffer = source.read(8192)
-                    if not buffer:
-                        break
+    # Use Python to do the replacement reliably
+    start_marker = "def load_vad_model(device, vad_onset=0.500, vad_offset=0.363, use_auth_token=None, model_fp=None):"
+    end_marker = "class Binarize:"
 
-                    output.write(buffer)
-                    loop.update(len(buffer))
+    if start_marker not in content or end_marker not in content:
+        print("  vad.py markers not found, skipping")
+        return
 
-    model_bytes = open(model_fp, "rb").read()
-    if hashlib.sha256(model_bytes).hexdigest() != VAD_SEGMENTATION_URL.split("/")[-2]:
-        raise RuntimeError(
-            "Model has been downloaded but the SHA256 checksum does not not match. Please retry loading the model."
-        )"""
+    start_idx = content.index(start_marker)
+    end_idx = content.index(end_marker)
 
-    new = """    if not os.path.isfile(model_fp):
+    new_func = """def load_vad_model(device, vad_onset=0.500, vad_offset=0.363, use_auth_token=None, model_fp=None):
+    model_dir = torch.hub._get_torch_home()
+    os.makedirs(model_dir, exist_ok = True)
+    if model_fp is None:
+        model_fp = os.path.join(model_dir, "whisperx-vad-segmentation.bin")
+    if os.path.exists(model_fp) and not os.path.isfile(model_fp):
+        raise RuntimeError(f"{model_fp} exists and is not a regular file")
+    if not os.path.isfile(model_fp):
         try:
             from huggingface_hub import hf_hub_download, login
-            token = use_auth_token or os.environ.get('HF_TOKEN')
-            if token:
-                login(token=token)
-            downloaded = hf_hub_download('pyannote/segmentation-3.0', 'pytorch_model.bin', token=token)
-            import shutil
-            shutil.copy2(downloaded, model_fp)
+            token = use_auth_token or os.environ.get("HF_TOKEN")
+            if token: login(token=token)
+            downloaded = hf_hub_download("pyannote/segmentation-3.0", "pytorch_model.bin", token=token)
+            import shutil; shutil.copy2(downloaded, model_fp)
         except Exception as e:
-            raise RuntimeError(
-                f'Failed to download VAD model: {e}. '
-                'Accept pyannote terms at https://huggingface.co/pyannote/segmentation-3.0'
-            )"""
+            raise RuntimeError(f"VAD download failed: {e}. Accept pyannote terms at https://huggingface.co/pyannote/segmentation-3.0")
+    vad_model = Model.from_pretrained(model_fp, use_auth_token=use_auth_token)
+    try:
+        hyperparameters = {"onset": vad_onset,
+                        "offset": vad_offset,
+                        "min_duration_on": 0.1,
+                        "min_duration_off": 0.1}
+        vad_pipeline = VoiceActivitySegmentation(segmentation=vad_model, device=torch.device(device))
+        vad_pipeline.instantiate(hyperparameters)
+    except ValueError:
+        vad_pipeline = VoiceActivitySegmentation(segmentation=vad_model, device=torch.device(device))
+        vad_pipeline.instantiate({})
+    return vad_pipeline
 
-    if old in content:
-        content = content.replace(old, new)
-        with open(path, "w") as f:
-            f.write(content)
-        print("  vad.py patched (string replace)")
-    else:
-        # Fallback: line-by-line patch
-        with open(path) as f:
-            lines = f.readlines()
-        new_lines = []
-        skip = False
-        for line in lines:
-            if "with urllib.request.urlopen(VAD_SEGMENTATION_URL)" in line:
-                skip = True
-                new_lines.extend(
-                    [
-                        "    if not os.path.isfile(model_fp):\n",
-                        "        try:\n",
-                        "            from huggingface_hub import hf_hub_download, login\n",
-                        "            token = use_auth_token or os.environ.get('HF_TOKEN')\n",
-                        "            if token: login(token=token)\n",
-                        "            downloaded = hf_hub_download('pyannote/segmentation-3.0', 'pytorch_model.bin', token=token)\n",
-                        "            import shutil; shutil.copy2(downloaded, model_fp)\n",
-                        "        except Exception as e:\n",
-                        "            raise RuntimeError(f'VAD download failed: {e}')\n",
-                    ]
-                )
-                continue
-            if skip:
-                if "model_bytes" in line or "hashlib" in line or "checksum" in line:
-                    continue
-                if line.strip() == "" or line.strip() == ")":
-                    skip = False
-                    continue
-                continue
-            new_lines.append(line)
-        with open(path, "w") as f:
-            f.writelines(new_lines)
-        print("  vad.py patched (line-by-line)")
+"""
+
+    new_content = content[:start_idx] + new_func + content[end_idx:]
+
+    with open(path, "w") as f:
+        f.write(new_content)
+    print("  vad.py patched")
 
 
 def patch_asr():
@@ -125,55 +99,8 @@ def patch_asr():
     print("  asr.py patched")
 
 
-def patch_vad_params():
-    """Patch whisperx/vad.py to handle pyannote 3.1 missing onset/offset params."""
-    path = "/usr/local/lib/python3.12/dist-packages/whisperx/vad.py"
-    if not os.path.exists(path):
-        print(f"  {path} not found, skipping")
-        return
-
-    with open(path) as f:
-        content = f.read()
-
-    if "VoiceActivitySegmentation" not in content:
-        print("  vad.py VoiceActivitySegmentation not found, skipping")
-        return
-
-    # Check if already patched
-    if "except ValueError:" in content:
-        print("  vad.py VAD params already patched")
-        return
-
-    old = """    hyperparameters = {"onset": vad_onset,
-                    "offset": vad_offset,
-                    "min_duration_on": 0.1,
-                    "min_duration_off": 0.1}
-    vad_pipeline = VoiceActivitySegmentation(segmentation=vad_model, device=torch.device(device))
-    vad_pipeline.instantiate(hyperparameters)"""
-
-    new = """    try:
-        hyperparameters = {"onset": vad_onset,
-                        "offset": vad_offset,
-                        "min_duration_on": 0.1,
-                        "min_duration_off": 0.1}
-        vad_pipeline = VoiceActivitySegmentation(segmentation=vad_model, device=torch.device(device))
-        vad_pipeline.instantiate(hyperparameters)
-    except ValueError:
-        vad_pipeline = VoiceActivitySegmentation(segmentation=vad_model, device=torch.device(device))
-        vad_pipeline.instantiate({})"""
-
-    if old in content:
-        content = content.replace(old, new)
-        with open(path, "w") as f:
-            f.write(content)
-        print("  vad.py VAD params patched")
-    else:
-        print("  vad.py VAD params pattern not found, may need manual fix")
-
-
 if __name__ == "__main__":
-    print("Patching whisperx...")
+    print("Patching whisperx...", flush=True)
     patch_vad()
     patch_asr()
-    patch_vad_params()
-    print("Done!")
+    print("Done!", flush=True)

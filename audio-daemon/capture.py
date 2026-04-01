@@ -230,7 +230,7 @@ class AudioCapture:
             sys_avail = self.system_buffer.qsize()
             mic_avail = self.mic_buffer.qsize()
 
-            if sys_avail == 0 and mic_avail == 0:
+            if sys_avail == 0 or mic_avail == 0:
                 time.sleep(0.001)
                 continue
 

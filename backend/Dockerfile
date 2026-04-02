@@ -27,6 +27,9 @@ COPY requirements.txt requirements.worker.txt ./
 
 RUN pip install --no-cache-dir -r requirements.worker.txt
 
+# Install PyTorch with CUDA 12.1 support
+RUN pip install --no-cache-dir torch==2.5.1+cu121 torchaudio==2.5.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+
 COPY . .
 
 RUN chmod +x /app/start_api.sh

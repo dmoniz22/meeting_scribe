@@ -41,6 +41,8 @@ services:
       dockerfile: Dockerfile
     container_name: meetscribe-api
     restart: unless-stopped
+    devices:
+      - "nvidia.com/gpu=all"
     environment:
       DATABASE_URL: postgresql+asyncpg://meetscribe:${POSTGRES_PASSWORD:-Birdsey5%40}@db:5432/meetscribe
       REDIS_URL: redis://redis:6379/0

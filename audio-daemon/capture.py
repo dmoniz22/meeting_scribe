@@ -95,9 +95,22 @@ class AudioCapture:
         output_dir: str,
         config: Optional[AudioConfig] = None,
         level_callback: Optional[Callable[[float, float], None]] = None,
+        started_at: Optional[str] = None,
     ):
         self.meeting_id = meeting_id
-        self.output_dir = Path(output_dir) / meeting_id
+        self.started_at = started_at
+
+        if started_at:
+            try:
+                dt = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
+                self.dir_name = dt.strftime("%Y-%m-%d_%H-%M-%S")
+            except Exception:
+                self.dir_name = meeting_id
+        else:
+            self.dir_name = meeting_id
+
+        self.chunks_dir = Path(output_dir) / self.dir_name / "chunks"
+        self.output_dir = Path(output_dir)
         self.config = config or AudioConfig()
         self.level_callback = level_callback
 
@@ -114,7 +127,7 @@ class AudioCapture:
         self.current_levels = {"system": 0.0, "mic": 0.0}
         self._level_lock = threading.Lock()
 
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.chunks_dir.mkdir(parents=True, exist_ok=True)
 
         self.system_device_id = self._find_system_device()
         self.mic_device_id = self._find_mic_device()
@@ -270,7 +283,7 @@ class AudioCapture:
         return elapsed >= self.config.chunk_duration
 
     def _start_new_chunk(self):
-        chunk_filename = self.output_dir / f"chunk_{self.current_chunk:03d}.wav"
+        chunk_filename = self.chunks_dir / f"chunk_{self.current_chunk:03d}.wav"
         self.current_file = wave.open(str(chunk_filename), "wb")
         self.current_file.setnchannels(1)
         self.current_file.setsampwidth(2)
@@ -344,13 +357,13 @@ class AudioCapture:
             return self.current_levels.copy()
 
     def concatenate_chunks(self, output_filename: str = "full_recording.wav") -> Path:
-        output_path = self.output_dir / output_filename
-        chunk_list = sorted(self.output_dir.glob("chunk_*.wav"))
+        output_path = self.output_dir / self.dir_name / output_filename
+        chunk_list = sorted(self.chunks_dir.glob("chunk_*.wav"))
         if not chunk_list:
             return output_path
 
         print(f"Concatenating {len(chunk_list)} chunks...")
-        list_file = self.output_dir / "chunks.txt"
+        list_file = self.chunks_dir / "chunks.txt"
         with open(list_file, "w") as f:
             for chunk in chunk_list:
                 f.write(f"file '{chunk.name}'\n")
@@ -374,12 +387,15 @@ class AudioCapture:
                 ],
                 check=True,
                 capture_output=True,
-                cwd=self.output_dir,
+                cwd=self.chunks_dir,
             )
             print(f"Created {output_path}")
         except subprocess.CalledProcessError as e:
             print(f"Error: {e.stderr.decode() if e.stderr else e}")
         finally:
             list_file.unlink(missing_ok=True)
+            import shutil
+            shutil.rmtree(self.chunks_dir)
+            print(f"  Cleaned up chunks directory")
 
         return output_path

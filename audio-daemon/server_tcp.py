@@ -211,6 +211,7 @@ class AudioDaemon:
                 output_dir=str(self.recordings_path),
                 config=self.audio_config,
                 level_callback=self._publish_levels,
+                started_at=self.state.started_at,
             )
 
             # Start recording

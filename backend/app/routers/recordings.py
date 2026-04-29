@@ -319,20 +319,26 @@ async def stop_recording(db: AsyncSession = Depends(get_db)):
         meeting.status = "recorded"
         meeting.ended_at = datetime.utcnow()
         meeting.duration_seconds = int(duration)
-        meeting.audio_path = daemon_response.get("audio_path")
+
+        audio_path = daemon_response.get("audio_path")
+        if not audio_path and meeting.id:
+            audio_path = f"/data/recordings/{meeting.id}/full_recording.wav"
+
+        meeting.audio_path = audio_path
         await db.commit()
 
         return StopRecordingResponse(
             success=True,
             meeting_id=meeting.id,
             duration_seconds=duration,
-            audio_path=daemon_response.get("audio_path", ""),
+            audio_path=audio_path or "",
             message="Recording stopped successfully. Use /transcribe endpoint to start transcription.",
         )
 
     except HTTPException:
         raise
     except Exception as e:
+        await db.rollback()
         raise HTTPException(
             status_code=500, detail=f"Failed to stop recording: {str(e)}"
         )

@@ -48,7 +48,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-change-me-in-production}
-      AUDIO_DAEMON_HOST: host.docker.internal
+      AUDIO_DAEMON_HOST: 172.17.0.1
       AUDIO_DAEMON_PORT: 9000
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       RECORDINGS_PATH: /data/recordings

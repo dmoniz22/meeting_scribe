@@ -205,6 +205,14 @@ class AudioDaemon:
             except Exception as e:
                 print(f"Warning: Could not set up audio routing: {e}")
 
+            # Update state before creating capture so timestamp is available
+            self.state.is_recording = True
+            self.state.meeting_id = meeting_id
+            self.state.started_at = datetime.utcnow().isoformat()
+            self.state.duration_seconds = 0.0
+            self.state.chunks_recorded = 0
+            self.state.error = None
+
             # Create capture instance with configured devices
             self.capture = AudioCapture(
                 meeting_id=meeting_id,
@@ -216,14 +224,6 @@ class AudioDaemon:
 
             # Start recording
             self.capture.start()
-
-            # Update state
-            self.state.is_recording = True
-            self.state.meeting_id = meeting_id
-            self.state.started_at = datetime.utcnow().isoformat()
-            self.state.duration_seconds = 0.0
-            self.state.chunks_recorded = 0
-            self.state.error = None
 
             print(f"✓ Recording started successfully")
 

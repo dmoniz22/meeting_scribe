@@ -324,6 +324,7 @@ async def stop_recording(db: AsyncSession = Depends(get_db)):
         if not audio_path and meeting.id:
             audio_path = f"/data/recordings/{meeting.id}/full_recording.wav"
 
+        audio_path = convert_host_to_container_path(audio_path or "")
         meeting.audio_path = audio_path
         await db.commit()
 

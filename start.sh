@@ -5,11 +5,20 @@ cd "$(dirname "$0")"
 
 echo "Starting MeetScribe services..."
 
-# Start Docker services
-echo "Starting Docker containers..."
-docker compose up -d
+# Use podman (Docker was uninstalled from this system)
+export DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"
 
-# Wait for containers to be healthy
+# Ensure podman socket is running
+if ! pgrep -f "podman" > /dev/null; then
+    echo "Starting podman..."
+    systemctl --user start podman.socket
+fi
+
+# Start Docker services via podman
+echo "Starting containers..."
+docker-compose up -d
+
+# Wait for API to be healthy
 echo "Waiting for API to be healthy..."
 until curl -sf http://localhost:8005/api/v1/health > /dev/null 2>&1; do
     sleep 1
@@ -19,9 +28,9 @@ done
 if ! pgrep -f "server_tcp.py" > /dev/null; then
     echo "Starting audio daemon..."
     cd audio-daemon
-    nohup python3 server_tcp.py > /tmp/audio-daemon.log 2>&1 &
+    setsid python3 server_tcp.py > /tmp/audio-daemon.log 2>&1 < /dev/null &
     cd ..
-    sleep 2
+    sleep 3
 fi
 
 # Verify audio daemon
